@@ -6,6 +6,15 @@ blasts throw bodies, and corpses near you stay physical.
 
 **Test release.** It works out of the box; the parts that change fights are experimental and off by default.
 
+## Videos
+
+[![Video 1](docs/media/video-1.gif)](docs/media/video-1.mp4)
+[![Video 2](docs/media/video-2.gif)](docs/media/video-2.mp4)
+[![Video 3](docs/media/video-3.gif)](docs/media/video-3.mp4)
+[![Video 4](docs/media/video-4.gif)](docs/media/video-4.mp4)
+[![Video 5](docs/media/video-5.gif)](docs/media/video-5.mp4)
+[![Video 6](docs/media/video-6.gif)](docs/media/video-6.mp4)
+
 ## Install
 
 Download the zip from [Releases](../../releases/latest) and extract it into your SPT folder (the one with `BepInEx`).
