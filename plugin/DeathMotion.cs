@@ -540,7 +540,6 @@ internal sealed class DeathMotion : MonoBehaviour
                            $"arms out {(_braces ? "yes" : "no")}, shooter {(_hasShooter ? "known" : "-")}, lies hurt {(_lieHurt ? $"{_hurtTo - _hurtFrom:F1} s" : "no")}, twitches {(_throesTo > 0 ? "yes" : "no")}, {_bodies.Count} bodies, {spines} spine, " +
                            $"{_mass:F0} kg, arms {(_arms[0].Ok ? "L" : "")}{(_arms[1].Ok ? "R" : "")}, physics {PhysicsMode()}");
         if (Plugin.VerboseLog.Value) Plugin.Log.LogInfo($"[EuphoriaStylePhysics] bodies: {roles}");
-        if (!_knock && _woundBody != null) TakeHit(_woundBody);   // 0.17.5: the killing round's push shows too
         if (!_knock) SeparateOverlaps(player);   // Knockdown does its own (it keeps them apart for the whole knockdown)
         return true;
     }
@@ -627,7 +626,7 @@ internal sealed class DeathMotion : MonoBehaviour
         bool dying = Driven.TryGetValue(rb, out var dm) && dm != null;
         if (dying)
         {
-            dm.TakeHit(rb);
+            dm.TakeHit(rb, dir);
             if (Plugin.BurstKeepsUp.Value) dm.TakeRound(rb);
         }
         // 0.17.5: our own push only when RealTargets does not push corpses itself (both together pushed twice)
@@ -651,12 +650,19 @@ internal sealed class DeathMotion : MonoBehaviour
     }
 
     private float _yieldUntil = -1f;
-    private Vector3 _pushVel;
+    private Vector3 _pushVel, _pushFrom, _hitDir, _hitV0;
 
-    // 0.17.5: a round into this dying body: the hold and the hit part's muscle give way for a moment, so the push shows
-    private void TakeHit(Rigidbody rb)
+    // 0.17.5: a later round into this dying body (the killing round is EFT's, as RealTargets leaves it): the hold and the hit
+    // part's muscle give way for a moment, so the push shows. Only the speed the round adds along its own way is kept: following
+    // all of the body's speed also carried the walk it died in and the tip of its fall (user: a body ended 3.3 m away).
+    private void TakeHit(Rigidbody rb, Vector3 dir)
     {
         if (_knock) return;
+        dir.y = 0f;
+        if (dir.sqrMagnitude < 1e-6f) return;
+        _hitDir = dir.normalized;
+        _hitV0 = Flat3(_bodies[_pelvis].Rb.velocity);
+        _pushFrom = _pushVel;
         _yieldUntil = _t + 0.3f;   // RealTargets pushes up to its volley window (0.05 s) after the hit
         foreach (var b in _bodies)
             if (b.Rb == rb)
@@ -956,7 +962,11 @@ internal sealed class DeathMotion : MonoBehaviour
             // 0.17.5 (GitHub report: "Bullets are not pushing bodies with this mod + real targets"): the hold drove the pelvis back to
             // its planned speed within a quarter second, so a push from a round (RealTargets', ours, EFT's death impulse) was undone
             // at once. For a moment after a hit the planned speed follows what the body really got; then it eases back to the plan.
-            if (_t < _yieldUntil) _pushVel = Vector3.MoveTowards(_pushVel, Vector3.ClampMagnitude(vH - vT, 2.5f), 25f * dt);
+            if (_t < _yieldUntil)
+            {
+                float gain = Mathf.Clamp(Vector3.Dot(vH - _hitV0, _hitDir), 0f, 1.5f);   // what this round added, its way only
+                _pushVel = Vector3.MoveTowards(_pushVel, Vector3.ClampMagnitude(_pushFrom + _hitDir * gain, 2f), 25f * dt);
+            }
             else if (_pushVel != Vector3.zero) _pushVel = _pushVel.sqrMagnitude < 1e-4f ? Vector3.zero : _pushVel * Mathf.Exp(-dt / 0.6f);
             vT += _pushVel;
             Vector3 fh = Vector3.ClampMagnitude(_mass * 4f * (vT - vH), _mass * 6f) * support;
