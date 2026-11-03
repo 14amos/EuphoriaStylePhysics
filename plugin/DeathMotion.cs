@@ -27,6 +27,7 @@ internal sealed class DeathMotion : MonoBehaviour
         public Quaternion Rel0;   // rotation relative to the parent body when it died
         public float Wn;          // muscle natural frequency, rad/s
         public float Tone = 1f;   // per-body muscle multiplier (0: limp)
+        public float RelaxTo = -1f;   // 0.17.5: a round just hit it: its muscle gives way until then
         public readonly List<int> Children = new List<int>();
     }
 
@@ -539,6 +540,7 @@ internal sealed class DeathMotion : MonoBehaviour
                            $"arms out {(_braces ? "yes" : "no")}, shooter {(_hasShooter ? "known" : "-")}, lies hurt {(_lieHurt ? $"{_hurtTo - _hurtFrom:F1} s" : "no")}, twitches {(_throesTo > 0 ? "yes" : "no")}, {_bodies.Count} bodies, {spines} spine, " +
                            $"{_mass:F0} kg, arms {(_arms[0].Ok ? "L" : "")}{(_arms[1].Ok ? "R" : "")}, physics {PhysicsMode()}");
         if (Plugin.VerboseLog.Value) Plugin.Log.LogInfo($"[EuphoriaStylePhysics] bodies: {roles}");
+        if (!_knock && _woundBody != null) TakeHit(_woundBody);   // 0.17.5: the killing round's push shows too
         if (!_knock) SeparateOverlaps(player);   // Knockdown does its own (it keeps them apart for the whole knockdown)
         return true;
     }
@@ -621,10 +623,15 @@ internal sealed class DeathMotion : MonoBehaviour
     // corpse whose ragdoll still moves also pushes the part it hit, capped per body so full auto does not launch it.
     internal static void OnRound(Rigidbody rb, Vector3 point, Vector3 dir, float damage)
     {
-        bool push = Plugin.CorpseHits.Value, keepUp = Plugin.BurstKeepsUp.Value;
-        if (!push && !keepUp || rb == null || rb.isKinematic || dir.sqrMagnitude < 1e-6f) return;
+        if (rb == null || rb.isKinematic || dir.sqrMagnitude < 1e-6f) return;
         bool dying = Driven.TryGetValue(rb, out var dm) && dm != null;
-        if (keepUp && dying) dm.TakeRound(rb);
+        if (dying)
+        {
+            dm.TakeHit(rb);
+            if (Plugin.BurstKeepsUp.Value) dm.TakeRound(rb);
+        }
+        // 0.17.5: our own push only when RealTargets does not push corpses itself (both together pushed twice)
+        bool push = Plugin.CorpseHits.Value && !Plugin.RealTargetsPushesCorpses();
         if (!push) return;
         var corpse = rb.GetComponentInParent<Corpse>();
         if (corpse == null) return;
@@ -641,6 +648,23 @@ internal sealed class DeathMotion : MonoBehaviour
         _roundLogs++;
         if (Plugin.VerboseLog.Value || _roundLogs <= 5)
             Plugin.Log.LogInfo($"[EuphoriaStylePhysics] round #{_roundLogs} into {(dying ? "a dying" : "a dead")} body ({rb.name}): impulse {impulse:F1} N s, dmg {damage:F0}");
+    }
+
+    private float _yieldUntil = -1f;
+    private Vector3 _pushVel;
+
+    // 0.17.5: a round into this dying body: the hold and the hit part's muscle give way for a moment, so the push shows
+    private void TakeHit(Rigidbody rb)
+    {
+        if (_knock) return;
+        _yieldUntil = _t + 0.3f;   // RealTargets pushes up to its volley window (0.05 s) after the hit
+        foreach (var b in _bodies)
+            if (b.Rb == rb)
+            {
+                b.RelaxTo = _t + 0.25f;
+                if (b.Parent >= 0) _bodies[b.Parent].RelaxTo = Mathf.Max(_bodies[b.Parent].RelaxTo, _t + 0.15f);
+                break;
+            }
     }
 
     private void TakeRound(Rigidbody rb)
@@ -833,6 +857,7 @@ internal sealed class DeathMotion : MonoBehaviour
             }
             if (_style == Style.LegGives && IsLeg(b.Role, _legSide)) rt = 0.35f;
             if (hurt > 0f && ArmOf(b.Role) >= 0) rt *= 1f - hurt;   // no rifle-hold pose on the ground; an arm with a goal gets its own strength
+            if (_t < b.RelaxTo) rt *= 0.3f;   // 0.17.5: the part a round just hit goes with it for a moment
             b.Tone = rt;
         }
 
@@ -904,12 +929,13 @@ internal sealed class DeathMotion : MonoBehaviour
             fy = Mathf.Clamp(fy, 0f, 2f * _mass * g) * support;
             pelvis.AddForce(Vector3.up * fy);
 
-            Upright(pelvis, pelvis.rotation * _pelvisUpLocal, Vector3.up, support, wnMax, 0.5f * _mass);
+            float give = _t < _yieldUntil ? 0.4f : 1f;   // 0.17.5: the trunk tips with a hit before it is held up again
+            Upright(pelvis, pelvis.rotation * _pelvisUpLocal, Vector3.up, support * give, wnMax, 0.5f * _mass);
             var chest = _bodies[_chest].Rb;
             Vector3 chestUp = Quaternion.AngleAxis(_leanMax * kneel, right) * Vector3.up;
             if (_style == Style.LegGives) chestUp = Quaternion.AngleAxis(-12f * _legSide * kneel, fwd) * chestUp;
             if (_wallArm >= 0) chestUp = Vector3.Slerp(chestUp, (Vector3.up - 0.35f * _wallNormal).normalized, 0.5f);   // lean on the wall
-            Upright(chest, chest.rotation * _chestUpLocal, chestUp, support, wnMax, 0.3f * _mass);
+            Upright(chest, chest.rotation * _chestUpLocal, chestUp, support * give, wnMax, 0.3f * _mass);
 
             // stumble the way the round pushed it (or the run carried it); a wall stops the part going into it
             float env = _style == Style.Tumble ? 1f : 1f - Smooth(0.3f * _dur, 0.7f * _dur, _t);
@@ -927,6 +953,12 @@ internal sealed class DeathMotion : MonoBehaviour
                 }
             }
             Vector3 vH = Flat3(pelvis.velocity);
+            // 0.17.5 (GitHub report: "Bullets are not pushing bodies with this mod + real targets"): the hold drove the pelvis back to
+            // its planned speed within a quarter second, so a push from a round (RealTargets', ours, EFT's death impulse) was undone
+            // at once. For a moment after a hit the planned speed follows what the body really got; then it eases back to the plan.
+            if (_t < _yieldUntil) _pushVel = Vector3.MoveTowards(_pushVel, Vector3.ClampMagnitude(vH - vT, 2.5f), 25f * dt);
+            else if (_pushVel != Vector3.zero) _pushVel = _pushVel.sqrMagnitude < 1e-4f ? Vector3.zero : _pushVel * Mathf.Exp(-dt / 0.6f);
+            vT += _pushVel;
             Vector3 fh = Vector3.ClampMagnitude(_mass * 4f * (vT - vH), _mass * 6f) * support;
             pelvis.AddForce(fh);
 

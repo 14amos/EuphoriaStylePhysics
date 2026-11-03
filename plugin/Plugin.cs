@@ -201,9 +201,9 @@ public sealed class Plugin : BaseUnityPlugin
             new ConfigDescription("More deaths than this playing at the same time: the rest use EFT's own ragdoll. Knockdowns do not count.", new AcceptableValueRange<int>(1, 40)));
         MaxDistance = Config.Bind(d, "Dying max distance (m)", 150f,
             new ConfigDescription("Farther from the camera: EFT's own ragdoll (saves time).", new AcceptableValueRange<float>(20f, 1000f)));
-        CorpseHits = Config.Bind(d, "Rounds push dying bodies", false,
-            "Our own push: a round into a body that is dying or still falling pushes the part it hits. With RealTargets: leave this "
-            + "off, its Impacts already push bodies and both together push twice as hard. Without RealTargets: turn it on.");
+        CorpseHits = Config.Bind(d, "Rounds push dying bodies", true,
+            "Our own push: a round into a body that is dying or still falling pushes the part it hits. Left to RealTargets when its "
+            + "Impacts push corpses (so a body is not pushed twice). Either way a dying body gives way to the hit for a moment.");
         LieWoundedChance = Config.Bind(d, "Lying wounded chance", 0.4f,
             new ConfigDescription("Share of bodies that lie hurt for 2-5 s after the fall (curl up, a hand on the wound or reaching out) before going still. "
                 + "Not after headshots or blasts.",
@@ -505,8 +505,18 @@ public sealed class Plugin : BaseUnityPlugin
 
     // 0.17.0: RealTargets (com.stompa.realtargets, read from its settings only) throws dead bodies within 6 m (chest) of a grenade
     // when its General > Enabled and Impacts > Blast injuries are on (checked live: it switches live).
-    private static ConfigEntry<bool> _rtEnabled, _rtBlast;
+    private static ConfigEntry<bool> _rtEnabled, _rtBlast, _rtImpacts, _rtPushCorpses;
+    private static ConfigEntry<float> _rtPushStrength;
     private static bool _rtLooked;
+
+    // 0.17.5: RealTargets pushes rounds into dead bodies when its General > Enabled, Impacts > Enabled and Push corpses are on and
+    // its Push strength is above 0 (checked live). Then our own push stays off, whatever "Rounds push dying bodies" says.
+    internal static bool RealTargetsPushesCorpses()
+    {
+        RealTargetsThrowsCorpses();   // reads its settings once
+        return _rtImpacts != null && _rtImpacts.Value && (_rtPushCorpses == null || _rtPushCorpses.Value) &&
+               (_rtPushStrength == null || _rtPushStrength.Value > 0f) && (_rtEnabled == null || _rtEnabled.Value);
+    }
 
     internal static bool RealTargetsThrowsCorpses()
     {
@@ -519,8 +529,14 @@ public sealed class Plugin : BaseUnityPlugin
                 {
                     info.Instance.Config.TryGetEntry("General", "Enabled", out _rtEnabled);
                     info.Instance.Config.TryGetEntry("Impacts", "Blast injuries", out _rtBlast);
+                    info.Instance.Config.TryGetEntry("Impacts", "Enabled", out _rtImpacts);
+                    info.Instance.Config.TryGetEntry("Impacts", "Push corpses", out _rtPushCorpses);
+                    info.Instance.Config.TryGetEntry("Impacts", "Push strength", out _rtPushStrength);
                     Log.LogInfo($"[EuphoriaStylePhysics] RealTargets found: Enabled {(_rtEnabled != null ? _rtEnabled.Value.ToString() : "not found")}, " +
-                                $"Blast injuries {(_rtBlast != null ? _rtBlast.Value.ToString() : "not found")}");
+                                $"Blast injuries {(_rtBlast != null ? _rtBlast.Value.ToString() : "not found")}, " +
+                                $"Impacts {(_rtImpacts != null ? _rtImpacts.Value.ToString() : "not found")}, " +
+                                $"Push corpses {(_rtPushCorpses != null ? _rtPushCorpses.Value.ToString() : "not found")}, " +
+                                $"Push strength {(_rtPushStrength != null ? _rtPushStrength.Value.ToString("F2") : "not found")}");
                 }
             }
             catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] RealTargets settings not read: {e.Message}"); }

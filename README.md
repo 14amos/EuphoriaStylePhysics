@@ -62,8 +62,8 @@ Log: `BepInEx/LogOutput.log`, lines starting with `[EuphoriaStylePhysics]`. Plea
 
 ## Other mods
 
-- **RealTargets:** works together. Its bullet push (Impacts) moves dead and dying bodies, so our own round push is off
-  by default. Its Blast injuries throws grenade kills within 6 m; our blast throw then leaves those bodies to it. If
+- **RealTargets:** works together. Its bullet push (Impacts) moves dead and dying bodies, and a dying body gives way to
+  it for a moment; our own round push is then left out (so nothing is pushed twice). Its Blast injuries throws grenade kills within 6 m; our blast throw then leaves those bodies to it. If
   bodies fly too far from bullets, lower RealTargets' Impacts > Push strength.
 - **HollywoodFX:** keep its "08. Ragdoll Effects" off. On, it pushes every shot body hard and changes every body
   part's weight, drag and bounce, which fights this mod. Its gore, blood and explosion effects are fine.
