@@ -108,7 +108,9 @@ public sealed class Plugin : BaseUnityPlugin
     {
         Log = Logger;
         // 0.9.0 (user: every main feature toggleable with ease): the main switches all sit in "1. General", first in F12
-        const string g = "1. General", d = "2. Dying", f = "3. Living hits", k = "4. Knockdowns";
+        // 0.17.6 (user: settings regrouped, feature switches): one section per feature with its main switch first; the main switches
+        // also side by side in 1. General (LinkFeatureSwitches)
+        const string g = "1. General", d = "2. Dying", f = "3. Hit flinch", k = "4. Knockdowns", c = "5. Corpses";
         Enabled = Config.Bind(g, "Enabled", true, "Master switch.");
         VerboseLog = Config.Bind(g, "Verbose log", false, "More detail in the BepInEx log for every part of the mod: each flinch, corpse, knockdown and skipped death (deaths are always logged).");
         Preset = Config.Bind(g, "Style preset", StylePreset.Euphoric,
@@ -127,22 +129,24 @@ public sealed class Plugin : BaseUnityPlugin
         ToggleKey = Config.Bind(g, "Toggle key", new KeyboardShortcut(KeyCode.E, KeyCode.LeftControl, KeyCode.LeftShift),
             "Turns the whole mod on or off in game (same as Enabled).");
 
-        DeathEnabled = Config.Bind(g, "Dying with muscles", true,
+        DeathEnabled = Config.Bind(d, "Dying with muscles", true, new ConfigDescription(
             "MAIN SWITCH (visual). A body killed on its feet keeps its muscles for a moment: stumbles, hand on the wound, knees give, "
-            + "lies hurt. Off: EFT's own ragdoll. Details in 2. Dying.");
-        FlinchEnabled = Config.Bind(g, "Hit flinch", true,
+            + "lies hurt. Off: EFT's own ragdoll. Details below.", null, new ConfigurationManagerAttributes { Order = 1000 }));
+        FlinchEnabled = Config.Bind(f, "Hit flinch", true, new ConfigDescription(
             "MAIN SWITCH (visual). Bots and other players hit by a round flinch on top of EFT's own hit reaction: a short snap (about "
-            + "a quarter second) of the spine, head, a knee or an arm. Never your own body. Details in 3. Living hits.");
-        BlastFlinch = Config.Bind(g, "Explosion flinch", true,
-            "MAIN SWITCH (visual). Bots and other players near an explosion they survive recoil away from it. Strength: Flinch strength.");
+            + "a quarter second) of the spine, head, a knee or an arm. Never your own body. Details below.", null,
+            new ConfigurationManagerAttributes { Order = 1000 }));
+        BlastFlinch = Config.Bind(f, "Explosion flinch", true, new ConfigDescription(
+            "MAIN SWITCH (visual). Bots and other players near an explosion they survive recoil away from it. Strength: Flinch strength.",
+            null, new ConfigurationManagerAttributes { Order = 900 }));
         // 0.17.3 (user: ragdolls keep moving when you are near)
-        CorpseWakeOn = Config.Bind(g, "Corpses stay physical near you", true,
+        CorpseWakeOn = Config.Bind(c, "Corpses stay physical near you", true, new ConfigDescription(
             "MAIN SWITCH (visual). EFT freezes a corpse once it lies still; near you it stays a ragdoll (or becomes one again), so "
             + "rounds, blasts and other bodies still move it. Walk away and EFT freezes it again. Only on this PC (not synced). "
-            + "Details in 2. Dying.");
-        KnockdownEnabled = Config.Bind(g, "Knockdowns", false,
+            + "Details below.", null, new ConfigurationManagerAttributes { Order = 1000 }));
+        KnockdownEnabled = Config.Bind(k, "Knockdowns", false, new ConfigDescription(
             "MAIN SWITCH, EXPERIMENTAL (gameplay: the bot cannot shoot while down). A bot hit hard goes down on its own ragdoll and gets back up. "
-            + "Only where the bots' AI runs. Details in 4. Knockdowns.");
+            + "Only where the bots' AI runs. Details below.", null, new ConfigurationManagerAttributes { Order = 1000 }));
         DropDeadChance = Config.Bind(d, "Drop dead chance", 0.25f,
             new ConfigDescription("Share of the kills our dying would play that go limp on the spot instead (EFT's own ragdoll).", new AcceptableValueRange<float>(0f, 1f)));
         HeadshotLegsGoChance = Config.Bind(d, "Headshot: legs go at once", 0.25f,
@@ -175,15 +179,15 @@ public sealed class Plugin : BaseUnityPlugin
             "A blast throws the body up and away (harder the closer it was): arms up to guard the head, legs tucked, a hard landing. "
             + "Kills go limp after it; bots knocked down by a blast (4. Knockdowns) lie hurt and get up.");
         // 0.17.0 (user: works with RealTargets?): its "Blast injuries" throws grenade kills within 6 m too
-        CorpseWakeDistance = Config.Bind(d, "Corpses stay physical within (m)", 12f,
+        CorpseWakeDistance = Config.Bind(c, "Corpses stay physical within (m)", 12f,
             new ConfigDescription("How close a corpse has to be to you to stay or become a ragdoll again.", new AcceptableValueRange<float>(2f, 50f)));
-        CorpseWakeMax = Config.Bind(d, "Most physical corpses at once", 10,
+        CorpseWakeMax = Config.Bind(c, "Most physical corpses at once", 10,
             new ConfigDescription("Cap on corpses kept or made physical near you (performance).", new AcceptableValueRange<int>(1, 40)));
         // 0.17.4 (user clip: rolling down stairs jitters, then the body cannot be searched from above)
-        SmoothCollisions = Config.Bind(d, "Smooth body collisions", true,
+        SmoothCollisions = Config.Bind(c, "Smooth body collisions", true,
             "Bodies use continuous (speculative) collisions, more solver steps and a soft push-out from geometry, so they roll down "
             + "stairs instead of sinking into the steps and popping out. Costs a little CPU while bodies move.");
-        SearchThroughFloor = Config.Bind(d, "Search bodies lying on stairs", true,
+        SearchThroughFloor = Config.Bind(c, "Search bodies lying on stairs", true,
             "A body resting on (or slightly in) a stair step or floor can still be searched from above. Only 25 cm of tolerance: "
             + "walls still block.");
         BlastThrowWithRealTargets = Config.Bind(d, "Blast throw with RealTargets", false,
@@ -270,6 +274,9 @@ public sealed class Plugin : BaseUnityPlugin
             "While the body blends into EFT's prone, the bot's AI may not turn or crawl (else the pose slides away from where it lay).");
         KnockdownRiseTime = Config.Bind(k, "Getting up time (s)", 0.9f,
             new ConfigDescription("Blend from lying straight to standing (when not getting up through prone).", new AcceptableValueRange<float>(0.2f, 4f)));
+
+        CarryOverMovedSettings();
+        LinkFeatureSwitches();
 
         try
         {
@@ -430,6 +437,63 @@ public sealed class Plugin : BaseUnityPlugin
     // 0.17.5 (opening inventories spiked the frame time to ~6 ms): the search log looked the body up with FindObjectsOfType<Corpse>
     // (a scan of the whole scene) on every loot interaction. Corpses are remembered as they are made.
     private static readonly System.Collections.Generic.List<Corpse> KnownCorpses = new System.Collections.Generic.List<Corpse>();
+
+    // 0.17.6 (user: "feature switches", "settings regrouped"): every feature's main switch twice: side by side in 1. General, and at the
+    // top of its own section. The two are one switch: flipping either flips the other (the one in the feature's section wins at
+    // start, so a preset or old cfg value holds).
+    private void LinkFeatureSwitches()
+    {
+        var list = new (ConfigEntry<bool> main, string name, string what)[]
+        {
+            (DeathEnabled, "Dying with muscles", "Bodies killed on their feet stumble, reach for the wound and drop under muscle physics."),
+            (FlinchEnabled, "Hit flinch", "A quick snap (about 0.25 s) of the part that was hit."),
+            (BlastFlinch, "Explosion flinch", "Survivors near an explosion recoil away from it."),
+            (KnockdownEnabled, "Knockdowns", "Bots hit hard can go down and get back up. Changes fights."),
+            (CorpseWakeOn, "Corpses stay physical near you", "Corpses near you stay ragdolls instead of freezing."),
+        };
+        int order = 990;
+        foreach (var (main, name, what) in list)
+        {
+            if (main == null) continue;
+            var copy = Config.Bind("1. General", "Feature switch: " + name, main.Value,
+                new ConfigDescription($"Same switch as \"{name}\" in {main.Definition.Section}: flip either one. {what}", null,
+                    new ConfigurationManagerAttributes { Order = order--, DispName = name }));
+            copy.Value = main.Value;
+            bool busy = false;
+            main.SettingChanged += (_, __) => { if (busy) return; busy = true; try { copy.Value = main.Value; } finally { busy = false; } };
+            copy.SettingChanged += (_, __) => { if (busy) return; busy = true; try { main.Value = copy.Value; } finally { busy = false; } };
+        }
+    }
+
+    // 0.17.6: settings moved to new sections keep their value. BepInEx keeps a line it no longer reads as an orphan; one with the same
+    // name as a setting now bound in another section is that setting's old value. Lines of settings this version no longer has
+    // (the stagger's) are dropped from the file. Runs after every setting is bound.
+    private void CarryOverMovedSettings()
+    {
+        try
+        {
+            var prop = typeof(ConfigFile).GetProperty("OrphanedEntries", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
+            if (!(prop?.GetValue(Config) is System.Collections.Generic.Dictionary<ConfigDefinition, string> orphans) || orphans.Count == 0) return;
+            int moved = 0;
+            foreach (var old in new System.Collections.Generic.List<ConfigDefinition>(orphans.Keys))
+                foreach (var def in Config.Keys)
+                    if (def.Key == old.Key && def.Section != old.Section)
+                    {
+                        Config[def].SetSerializedValue(orphans[old]);
+                        orphans.Remove(old);
+                        moved++;
+                        break;
+                    }
+            int dropped = orphans.Count;
+            orphans.Clear();
+            if (moved > 0 || dropped > 0)
+            {
+                Config.Save();
+                Log.LogInfo($"[EuphoriaStylePhysics] {moved} settings moved to their new sections with your values, {dropped} old settings removed from the file");
+            }
+        }
+        catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] settings not carried over to the new sections: {e.Message}"); }
+    }
 
     private static void RagdollCreatedPostfix(Corpse __instance, bool forceStill)
     {
@@ -713,4 +777,11 @@ public sealed class Plugin : BaseUnityPlugin
             Flinch.Fail(e);
         }
     }
+}
+
+// 0.17.6: read by BepInEx's Configuration Manager (F12) by name: main switches first in their section, a display name for the copies
+internal sealed class ConfigurationManagerAttributes
+{
+    public int? Order;
+    public string DispName;
 }

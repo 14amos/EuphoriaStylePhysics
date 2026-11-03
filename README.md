@@ -53,7 +53,7 @@ The host sends knockdowns to every Fika client.
 ## Settings
 
 F12 (BepInEx Configuration Manager) > **Euphoria Style Physics**. Every main feature has its own switch in
-"1. General"; details are in "2. Dying", "3. Living hits" and "4. Knockdowns". The **Euphoric** style preset (default)
+"1. General", and again at the top of its own section: "2. Dying", "3. Hit flinch", "4. Knockdowns" and "5. Corpses". The **Euphoric** style preset (default)
 writes its values once; change anything afterwards. **Custom** sets nothing for you.
 
 Toggle key: **Ctrl+Shift+E** turns the whole mod on or off in game.
