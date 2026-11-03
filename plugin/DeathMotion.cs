@@ -636,8 +636,14 @@ internal sealed class DeathMotion : MonoBehaviour
         if (corpse == null) return;
         float now = Time.time;
         float impulse = Mathf.Clamp(6f + damage * 0.12f, 4f, 20f) * Plugin.CorpseHitScale.Value;
+        // 0.17.5 (raid log: at Round push strength 3 a burst threw bodies 5-6 m, the pelvis and head past 10 m/s): one round gives
+        // the part it hits at most 4 m/s (as RealTargets caps its push), and a burst at most 30 N s whatever the strength
+        float capped = Mathf.Min(impulse, rb.mass * 4f);
+        if (capped < impulse && (Plugin.VerboseLog.Value || _roundLogs < 5))
+            Plugin.Log.LogInfo($"[EuphoriaStylePhysics] round into {rb.name}: push {impulse:F1} N s capped to {capped:F1} (4 m/s on its {rb.mass:F1} kg)");
+        impulse = capped;
         if (RecentRounds.TryGetValue(corpse, out var r) && now - r.at < 0.3f)
-            impulse = Mathf.Min(impulse, Mathf.Max(0f, 30f * Plugin.CorpseHitScale.Value - r.sum));
+            impulse = Mathf.Min(impulse, Mathf.Max(0f, 30f - r.sum));
         else r = (now, 0f);
         RecentRounds[corpse] = (r.at, r.sum + impulse);
         if (RecentRounds.Count > 64) RecentRounds.Clear();
