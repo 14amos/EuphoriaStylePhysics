@@ -184,77 +184,6 @@ internal static class Flinch
                                $"dmg {shot.Damage:F0} {shot.DamageType}, strength {s:F2}");
     }
 
-    // 0.10.0 stagger steps (the feet slid while a bot was pushed back): a leg swings back the way it is pushed and the knee
-    // lifts, one leg after the other, on the same springs as the flinch (visual only).
-    internal static void StepKick(Player player, Vector3 dir, bool left)
-    {
-        if (!Plugin.FlinchEnabled.Value || !Plugin.StaggerSteps.Value || _errors > 20 || player == null) return;
-        if (!player.HealthController.IsAlive || Knockdown.IsActive(player)) return;
-        dir.y = 0f;
-        if (dir.sqrMagnitude < 1e-6f) return;
-        dir.Normalize();
-        if (!Rigs.TryGetValue(player, out var rig))
-        {
-            rig = Build(player);
-            if (rig == null) return;
-            Rigs[player] = rig;
-        }
-        Vector3 fwd = player.Transform.rotation * Vector3.forward;
-        fwd.y = 0f;
-        Vector3 right = fwd.sqrMagnitude > 1e-6f ? Vector3.Cross(Vector3.up, fwd.normalized) : Vector3.right;
-        // turning about cross(up, dir) by a negative angle swings a hanging leg toward dir
-        Vector3 swing = Vector3.Cross(Vector3.up, dir);
-        int thigh = left ? rig.ThighL : rig.ThighR, calf = left ? rig.CalfL : rig.CalfR;
-        if (thigh >= 0) rig.Bones[thigh].Omega -= swing * 4f;
-        if (calf >= 0) rig.Bones[calf].Omega += right * 3f;   // the knee bends: the foot comes up off the ground
-        rig.Quiet = 0f;
-    }
-
-    // 0.16.1 (user: "theres like no staggering when i shoot them"): while a bot is pushed back, its upper body is held leaning
-    // the way it is pushed (hips and spine back, the head lagging forward, knees soft), on the flinch springs: Euphoria's
-    // reeling body, not only a slide of the root. amount = 0..1 of the strongest stagger, called every frame it lasts.
-    internal static void Lean(Player player, Vector3 dir, float amount, float t)
-    {
-        if (!Plugin.FlinchEnabled.Value || _errors > 20 || player == null || amount <= 0.001f) return;
-        if (!player.HealthController.IsAlive || Knockdown.IsActive(player)) return;
-        dir.y = 0f;
-        if (dir.sqrMagnitude < 1e-6f) return;
-        dir.Normalize();
-        if (!Rigs.TryGetValue(player, out var rig))
-        {
-            rig = Build(player);
-            if (rig == null) return;
-            Rigs[player] = rig;
-        }
-        // a positive turn about cross(up, dir) tips a bone's top toward dir
-        Vector3 axis = Vector3.Cross(Vector3.up, dir) * (amount * Plugin.StaggerLean.Value);
-        void Set(int i, float rad) { if (i >= 0) rig.Bones[i].Hold = axis * rad; }
-        Set(rig.Pelvis, 0.06f);
-        Set(rig.Spine1, 0.09f);
-        Set(rig.Spine2, 0.09f);
-        Set(rig.Spine3, 0.08f);
-        Set(rig.Head, -0.14f);   // the head lags: it stays forward while the chest goes back
-        Vector3 fwd = player.Transform.rotation * Vector3.forward;
-        fwd.y = 0f;
-        Vector3 right = fwd.sqrMagnitude > 1e-6f ? Vector3.Cross(Vector3.up, fwd.normalized) : Vector3.right;
-        float knee = 0.25f * amount * Plugin.StaggerLean.Value;
-        if (rig.CalfL >= 0) rig.Bones[rig.CalfL].Hold = right * knee;
-        if (rig.CalfR >= 0) rig.Bones[rig.CalfR].Hold = right * knee;
-        // (user: "make their arms move while staggered") the free hand lets go of the gun and flails out for
-        // balance; the gun side stays on the grip and sways with the chest (the gun hangs off the spine, so it follows)
-        if (Plugin.StaggerArms.Value)
-        {
-            float a = amount * Plugin.StaggerLean.Value;
-            Vector3 fwdN = Vector3.Cross(right, Vector3.up);   // the body's forward
-            // a negative turn about forward swings a hanging left arm out to the left; about right, forward and back
-            if (rig.UpperL >= 0)
-                rig.Bones[rig.UpperL].Hold = fwdN * (-(0.75f + 0.35f * Mathf.Sin(t * 9f)) * a) + right * (0.45f * Mathf.Sin(t * 6f + 1f) * a);
-            if (rig.ForeL >= 0) rig.Bones[rig.ForeL].Hold = right * (-0.4f * a);   // the elbow bends
-            if (rig.Spine3 >= 0) rig.Bones[rig.Spine3].Hold += fwdN * (0.08f * Mathf.Sin(t * 7f) * a);
-        }
-        rig.Quiet = 0f;
-    }
-
     // An explosion the player survives: the spine and head recoil away from it, the knees give a little.
     internal static bool OnBlast(Player player, Vector3 at, float strength)
     {
@@ -431,7 +360,7 @@ internal static class Flinch
                 }
             }
             if (b.Theta.sqrMagnitude > 4e-6f || b.Omega.sqrMagnitude > 4e-4f || b.Hold.sqrMagnitude > 1e-6f) moving = true;
-            b.Hold = Vector3.zero;   // a lean is set again every frame it lasts (Stagger.BeforeApply, before this step)
+            b.Hold = Vector3.zero;   // a held pose is set again every frame it lasts
         }
         if (moving) rig.Quiet = 0f;
         else rig.Quiet += dt;

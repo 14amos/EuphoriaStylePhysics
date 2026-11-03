@@ -1,7 +1,7 @@
 # Euphoria Style Physics
 
 SPT 4.1.6 client plugin (BepInEx) that makes Tarkov bodies react the way Euphoria-driven characters do: shot bodies
-stumble, clutch the wound and give at the knees instead of dropping like a sack, survivors reel back and keep fighting,
+stumble, clutch the wound and give at the knees instead of dropping like a sack, survivors flinch and keep fighting,
 blasts throw bodies, and corpses near you stay physical.
 
 **Test release.** It works out of the box; the parts that change fights are experimental and off by default.
@@ -36,7 +36,6 @@ On by default (visual, how bodies look):
 - **Blast throw:** grenades throw bodies up and away (arms guard the head, legs tuck, hard landing).
 - **Hit flinch:** bots and other players flinch when hit (spine, head snap, knee buckle, arm jerk), on top of EFT's own
   hit reaction. Visual only: AI aim and hitboxes never see it, and never your own body.
-- **Stagger reel:** a bot hit by a round reels back for about a second (lean, flailing free arm, steps) and may keep shooting.
 - **Explosion flinch:** survivors recoil away from a blast.
 - **Corpses stay physical near you:** EFT freezes a corpse once it lies still; within 12 m of you it stays a ragdoll, so
   rounds, blasts and other bodies still move it. Walk away and EFT freezes it again (local only, not synced).
@@ -47,9 +46,6 @@ Off by default (experimental, changes gameplay; turn on in F12 if you want them)
 
 - **Knockdowns:** a bot hit hard goes down on its own ragdoll, writhes, rolls over and gets back up through prone; a bot
   with a bad leg may sit up and fire back. Explosions close by can throw survivors down.
-- **Stagger moves the bot:** the reel really pushes the bot back. Known issue: it can push a bot off the navmesh, and
-  EFT then teleports it to the nearest valid spot.
-- **Stagger interrupts the bot:** it stops walking while it reels.
 
 Gameplay parts only run where the bots' AI runs: single player, a raid hosted on your PC, or the Fika headless host.
 The host sends knockdowns to every Fika client.

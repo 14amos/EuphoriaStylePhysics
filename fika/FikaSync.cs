@@ -14,8 +14,7 @@ namespace EuphoriaStylePhysics;
 
 // 0.15.0 Fika sync (user: "build the sync"; raids run on a Fika headless host, where the bots' AI lives).
 // The host decides knockdowns (Knockdown.cs) and tells every client which bot went down, how, and when it gets up; the
-// clients play the same knockdown on their copy of that bot (visual only, the host moves it). Stagger needs nothing: it
-// moves the bot on the host and Fika sends the position. The same EuphoriaStylePhysics.dll must be on every machine
+// clients play the same knockdown on their copy of that bot (visual only, the host moves it). The same EuphoriaStylePhysics.dll must be on every machine
 // (Fika matches packets by type). 0.17.1: this code lives in its own EuphoriaStylePhysics.Fika.dll, loaded by Plugin only when
 // Fika is installed: a Fika type inside the main DLL made Assembly.GetTypes() throw without Fika, which broke every mod that
 // scans all assemblies (WTT-ClientCommonLib stopped registering its item parents -> "No C# type for taxonomy node").

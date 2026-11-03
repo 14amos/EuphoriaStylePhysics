@@ -20,7 +20,7 @@ namespace EuphoriaStylePhysics;
 // Project Real Limbs (Project Zomboid) by deewindler, https://www.youtube.com/@DwindleDwindle (CC BY-NC 4.0); none of its
 // code is used here (its Java solver has no Unity counterpart).
 [BepInDependency("com.fika.core", BepInDependency.DependencyFlags.SoftDependency)]
-[BepInPlugin("amos.euphoriastylephysics", "Euphoria Style Physics", "0.17.4")]
+[BepInPlugin("amos.euphoriastylephysics", "Euphoria Style Physics", "0.17.5")]
 public sealed class Plugin : BaseUnityPlugin
 {
     internal static ManualLogSource Log;
@@ -66,16 +66,8 @@ public sealed class Plugin : BaseUnityPlugin
     internal static ConfigEntry<bool> FlinchLegDip;
     internal static ConfigEntry<bool> FlinchArms;
     internal static ConfigEntry<bool> BlastFlinch;
-    internal static ConfigEntry<bool> StaggerEnabled;
-    internal static ConfigEntry<float> StaggerScale;
-    internal static ConfigEntry<float> StaggerChance;
-    internal static ConfigEntry<float> StaggerLean;
-    internal static ConfigEntry<bool> StaggerInterrupts;
-    internal static ConfigEntry<bool> StaggerArms;
-    internal static ConfigEntry<float> StaggerHoldFire;
 
     internal static ConfigEntry<bool> KnockdownEnabled;
-    internal static ConfigEntry<bool> StaggerMoves;
     internal static ConfigEntry<bool> BlastThrowWithRealTargets;
     internal static ConfigEntry<float> HoldUp;
     internal static ConfigEntry<bool> CorpseWakeOn;
@@ -109,7 +101,6 @@ public sealed class Plugin : BaseUnityPlugin
     internal static ConfigEntry<bool> ReachToShooter;
     internal static ConfigEntry<bool> FlinchHeadSnap;
     internal static ConfigEntry<bool> FlinchWhiplash;
-    internal static ConfigEntry<bool> StaggerSteps;
 
     private void Awake()
     {
@@ -120,8 +111,8 @@ public sealed class Plugin : BaseUnityPlugin
         VerboseLog = Config.Bind(g, "Verbose log", false, "Log every hit flinch too (deaths are always logged).");
         Preset = Config.Bind(g, "Style preset", StylePreset.Euphoric,
             "Euphoric: sets every value below for Euphoria-style bodies (consistent stagger, hand to the wound, knees give, "
-            + "headshots drop at once, survivors reel and keep fighting). The experimental gameplay parts (knockdowns, the stagger "
-            + "moving the bot) stay off; turn them on yourself. Applied once when picked; change anything afterwards as you like. "
+            + "headshots drop at once, survivors flinch and keep fighting). The experimental gameplay part (knockdowns) stays off; "
+            + "turn it on yourself. Applied once when picked; change anything afterwards as you like. "
             + "Custom: nothing is set for you.");
         PresetApplied = Config.Bind(g, "Style preset applied", false, "Set by the mod once the preset's values have been written.");
         PresetRevision = Config.Bind(g, "Style preset revision", 0, "Set by the mod: which revision of the preset's values was written (a newer one is written once).");
@@ -142,9 +133,6 @@ public sealed class Plugin : BaseUnityPlugin
             + "Details in 3. Living hits.");
         BlastFlinch = Config.Bind(g, "Explosion flinch", true,
             "MAIN SWITCH (visual). Bots and other players near an explosion they survive recoil away from it.");
-        StaggerEnabled = Config.Bind(g, "Stagger back when shot", true,
-            "MAIN SWITCH (visual unless \"Stagger moves the bot\" is on). A bot hit by a round reels back the way the round went for "
-            + "about a second: lean, flailing arm, steps. Only where the bots' AI runs: offline, a raid hosted on this PC, or the headless host.");
         // 0.17.3 (user: ragdolls keep moving when you are near)
         CorpseWakeOn = Config.Bind(g, "Corpses stay physical near you", true,
             "MAIN SWITCH (visual). EFT freezes a corpse once it lies still; near you it stays a ragdoll (or becomes one again), so "
@@ -211,8 +199,8 @@ public sealed class Plugin : BaseUnityPlugin
         MaxDistance = Config.Bind(d, "Dying max distance (m)", 150f,
             new ConfigDescription("Farther from the camera: EFT's own ragdoll (saves time).", new AcceptableValueRange<float>(20f, 1000f)));
         CorpseHits = Config.Bind(d, "Rounds push dying bodies", false,
-            "Our own push: a round into a body that is dying or still falling pushes the part it hits. Off by default because "
-            + "RealTargets (Impacts) already pushes bodies; turn on without RealTargets.");
+            "Our own push: a round into a body that is dying or still falling pushes the part it hits. With RealTargets: leave this "
+            + "off, its Impacts already push bodies and both together push twice as hard. Without RealTargets: turn it on.");
         LieWoundedChance = Config.Bind(d, "Lying wounded chance", 0.4f,
             new ConfigDescription("Share of bodies that lie hurt for 2-5 s after the fall (curl up, a hand on the wound or reaching out) before going still.",
                 new AcceptableValueRange<float>(0f, 1f)));
@@ -228,28 +216,10 @@ public sealed class Plugin : BaseUnityPlugin
         FlinchMaxDistance = Config.Bind(f, "Flinch max distance (m)", 120f,
             new ConfigDescription("Farther from the camera: no flinch (saves time).", new AcceptableValueRange<float>(10f, 1000f)));
         FlinchLegDip = Config.Bind(f, "Leg hit: knee dips", true, "A leg hit bends the knee for a moment.");
-        StaggerScale = Config.Bind(f, "Stagger strength", 1f, new ConfigDescription("", new AcceptableValueRange<float>(0f, 3f)));
-        StaggerChance = Config.Bind(f, "Stagger chance", 0.6f,
-            new ConfigDescription("Share of hits that make a bot stumble back (a bot already stumbling keeps going back with the burst).",
-                new AcceptableValueRange<float>(0f, 1f)));
         FlinchHeadSnap = Config.Bind(f, "Head hit: head snaps", true, "A head hit snaps the head back harder than a body hit.");
         FlinchWhiplash = Config.Bind(f, "Torso hit: head whiplash", true, "The head lags behind a hit to the chest or stomach.");
-        // 0.16.1 (user: "theres like no staggering when i shoot them")
-        StaggerLean = Config.Bind(f, "Stagger lean", 1f,
-            new ConfigDescription("How far the upper body reels back while a bot is pushed back (visual; needs Hit flinch). 0 = no lean.",
-                new AcceptableValueRange<float>(0f, 2.5f)));
-        // 0.17.0 (user: test release, gameplay changes off by default): the push itself is its own switch
-        StaggerMoves = Config.Bind(f, "Stagger moves the bot", false,
-            "EXPERIMENTAL gameplay: the reel really pushes the bot back (walls stop it). Off: the reel is visual only.");
-        StaggerInterrupts = Config.Bind(f, "Stagger interrupts the bot", false,
-            "Gameplay: while it is pushed back the bot stops walking/sprinting (it may still shoot, see below).");
-        StaggerArms = Config.Bind(f, "Stagger arms", true,
-            "Visual: while it reels the free hand lets go of the gun and flails out for balance, the gun sways (needs Hit flinch).");
-        StaggerHoldFire = Config.Bind(f, "Stagger: hold fire (s)", 0f,
-            new ConfigDescription("Gameplay: how long a staggered bot cannot fire (harder hits longer). 0 = it keeps shooting while it reels, "
-                + "(EFT's own hit already throws its aim off).", new AcceptableValueRange<float>(0f, 1.5f)));
-        StaggerSteps = Config.Bind(f, "Stagger steps", true,
-            "A bot pushed back steps with its legs instead of sliding (needs Hit flinch on; visual only).");
+        // 0.17.5 (user: "remove stagger entirely, just let hit flinch handle it"): the living stagger (reel back, lean, flailing
+        // arm, steps, push, interrupt, hold fire) is gone with its settings; a hit is the flinch alone
         FlinchArms = Config.Bind(f, "Arm hit: arm jerks", true, "An arm hit knocks the arm back for a moment (the hand may leave the gun briefly).");
 
         KnockdownImpact = Config.Bind(k, "Hit strength to go down", 80f,
@@ -309,18 +279,11 @@ public sealed class Plugin : BaseUnityPlugin
                 prefix: new HarmonyMethod(typeof(Plugin), nameof(SimulatePrefix)));
             h.Patch(AccessTools.Method(typeof(BodyPartCollider), nameof(BodyPartCollider.ApplyHit)),
                 postfix: new HarmonyMethod(typeof(Plugin), nameof(BodyPartHitPostfix)));
-            h.Patch(AccessTools.Method(typeof(MovementContext), nameof(MovementContext.AnimatorStatesLateUpdate)),
-                prefix: new HarmonyMethod(typeof(Plugin), nameof(AnimatorStatesLateUpdatePrefix)),
-                postfix: new HarmonyMethod(typeof(Stagger), nameof(Stagger.AfterApply)));
-            // 0.16.3: a bot's controller drops every motion against its steer direction (the stagger push went nowhere)
             // 0.17.4: a corpse woken near you is frozen before EFT takes its joints off (see CorpseWake)
             h.Patch(AccessTools.Method(typeof(GameWorld), nameof(GameWorld.FindInteractable)),
                 postfix: new HarmonyMethod(typeof(CorpseWake), nameof(CorpseWake.FindInteractablePostfix)));
             h.Patch(AccessTools.Method(typeof(JointSpawner), nameof(JointSpawner.Remove)),
                 prefix: new HarmonyMethod(typeof(CorpseWake), nameof(CorpseWake.BeforeJointRemove)));
-            h.Patch(AccessTools.Method(typeof(BotAISteeringImpostorCharacterController), nameof(BotAISteeringImpostorCharacterController.Move)),
-                prefix: new HarmonyMethod(typeof(Stagger), nameof(Stagger.SteerMovePrefix)),
-                postfix: new HarmonyMethod(typeof(Stagger), nameof(Stagger.SteerMovePostfix)));
             // knockdowns: no body animation, no movement, no firing while down
             h.Patch(AccessTools.Method(typeof(Player), nameof(Player.BodyUpdate)),
                 prefix: new HarmonyMethod(typeof(Plugin), nameof(FrozenPrefix)));
@@ -349,7 +312,7 @@ public sealed class Plugin : BaseUnityPlugin
             var obsMethod = observed == null ? null : AccessTools.DeclaredMethod(observed, nameof(Player.ShotReactions));
             if (obsMethod != null)
                 h.Patch(obsMethod, postfix: new HarmonyMethod(typeof(Plugin), nameof(ShotReactionsPostfix)));
-            Log.LogInfo($"[EuphoriaStylePhysics] 0.17.5 loaded; toggle key {ToggleKey.Value}; patches on: Corpse.TryToCreateRagdoll, sleep hierarchy, Physics.Simulate, BodyPartCollider.ApplyHit, MovementContext.AnimatorStatesLateUpdate, BotAISteeringImpostorCharacterController.Move, Player.BodyUpdate/MovementUpdate, FirearmController.SetTriggerPressed, BotSteering.ManualFixedUpdate, ExplosionSharedMethods.Explosion, Player.ShotReactions, CorpseRagdoll.StopRigidbody, loot search log" +
+            Log.LogInfo($"[EuphoriaStylePhysics] 0.17.5 loaded; toggle key {ToggleKey.Value}; patches on: Corpse.TryToCreateRagdoll, sleep hierarchy, Physics.Simulate, BodyPartCollider.ApplyHit, Player.BodyUpdate/MovementUpdate, FirearmController.SetTriggerPressed, BotSteering.ManualFixedUpdate, ExplosionSharedMethods.Explosion, Player.ShotReactions, CorpseRagdoll.StopRigidbody, loot search log" +
                         $"{(obsMethod != null ? " + ObservedPlayer.ShotReactions" : "")}; Fika {(observed != null ? "present" : "absent")}");
         }
         catch (Exception e)
@@ -387,8 +350,8 @@ public sealed class Plugin : BaseUnityPlugin
     }
 
     // the Euphoric preset (picked by Claude 2026-10-28; renamed 0.17.0).
-    // Revision 4 (0.17.0 test release, user: buggy and gameplay parts off, bodies launched too far): knockdowns, stagger push
-    // and interrupt off; stumble, dying time, blast throw and stagger strength turned down. Written once over older revisions.
+    // Revision 4 (0.17.0 test release, user: buggy and gameplay parts off, bodies launched too far): knockdowns off; stumble,
+    // dying time and blast throw turned down (0.17.5: the stagger settings are gone). Written once over older revisions.
     private static void ApplyEuphoric(string why)
     {
         Consistency.Value = 0.85f;
@@ -414,19 +377,10 @@ public sealed class Plugin : BaseUnityPlugin
         ExplosionsVanilla.Value = false;
         BlastThrow.Value = true;
         BlastThrowScale.Value = 0.6f;
-        // living: every hit staggers a little and they keep fighting; heavy hits, leg hits and blasts put them down
+        // living: every hit flinches and they keep fighting; heavy hits, leg hits and blasts put them down (knockdowns, off)
         FlinchEnabled.Value = true;
         FlinchScale.Value = 0.8f;
         BlastFlinch.Value = true;
-        StaggerEnabled.Value = true;
-        StaggerChance.Value = 1f;
-        StaggerScale.Value = 0.8f;
-        StaggerLean.Value = 1f;
-        StaggerMoves.Value = false;
-        StaggerInterrupts.Value = false;
-        StaggerArms.Value = true;
-        StaggerHoldFire.Value = 0f;
-        StaggerSteps.Value = true;
         KnockdownEnabled.Value = false;
         KnockdownImpact.Value = 90f;
         KnockdownChance.Value = 0.6f;
@@ -449,7 +403,7 @@ public sealed class Plugin : BaseUnityPlugin
         PresetApplied.Value = true;
         PresetRevision.Value = 4;
         Log.LogInfo($"[EuphoriaStylePhysics] Euphoric preset applied ({why}, revision 4): consistency 0.85, dying 1.0-2.0 s, stumble 0.5, "
-                    + "headshots drop at once, visual stagger on every hit, blast throw 0.6; knockdowns, stagger push + interrupt OFF");
+                    + "headshots drop at once, blast throw 0.6; knockdowns OFF");
     }
 
     private void Update()
@@ -667,12 +621,7 @@ public sealed class Plugin : BaseUnityPlugin
 
     private static void TriggerPrefix(Player.FirearmController __instance, ref bool pressed)
     {
-        if (pressed && __instance != null && (Knockdown.BlocksFire(__instance._player) || Stagger.HoldsFire(__instance._player))) pressed = false;
-    }
-
-    private static void AnimatorStatesLateUpdatePrefix(MovementContext __instance)
-    {
-        if (Enabled.Value) Stagger.BeforeApply(__instance);
+        if (pressed && __instance != null && Knockdown.BlocksFire(__instance._player)) pressed = false;
     }
 
     private static float _simTime, _realTime;
@@ -732,8 +681,6 @@ public sealed class Plugin : BaseUnityPlugin
                         + $"({(shot.HitCollider != null ? LayerMask.LayerToName(shot.HitCollider.gameObject.layer) : "no collider")}, {Knockdown.PhaseOf(__instance)})");
         try { Knockdown.OnHit(__instance, shot, bodyPart); }
         catch (Exception e) { Log.LogError($"[EuphoriaStylePhysics] knockdown check failed: {e}"); }
-        try { Stagger.OnHit(__instance, shot, bodyPart); }
-        catch (Exception e) { Log.LogError($"[EuphoriaStylePhysics] stagger start failed: {e}"); }
         if (!FlinchEnabled.Value) return;
         try
         {

@@ -145,6 +145,7 @@ internal sealed class DeathMotion : MonoBehaviour
     private bool _momentumGiven;
     // catch steps
     private int _stepLeg = -1;
+    private float _stepFast, _stepSwing = 0.28f;   // 0.17.5: how fast the push is (0-1) and this step's swing time
     private float _stepT, _stepRest;
     private Vector3 _stepTarget;
     // last twitches
@@ -1349,26 +1350,30 @@ internal sealed class DeathMotion : MonoBehaviour
             _stepRest -= dt;
             if (_stepRest > 0f || support < 0.35f) return;
             float offL = Flat3(_ankleL.position - under).magnitude, offR = Flat3(_ankleR.position - under).magnitude;
-            if (Mathf.Max(offL, offR) < 0.28f) return;
+            if (Mathf.Max(offL, offR) < Mathf.Lerp(0.28f, 0.2f, Mathf.InverseLerp(1f, 3.5f, vH.magnitude))) return;   // fast: step sooner
             _stepLeg = offL > offR ? 0 : 1;
             _stepT = 0f;
+            // 0.17.5 (high Stumble values looked like sliding back): a fast push takes quicker, longer, stronger steps, aimed where
+            // the pelvis will be when the foot lands
+            _stepFast = Mathf.InverseLerp(1f, 3.5f, vH.magnitude);
+            _stepSwing = Mathf.Lerp(0.28f, 0.2f, _stepFast);
             Vector3 lateral = right * (_stepLeg == 0 ? -0.1f : 0.1f);
-            _stepTarget = under + vH * 0.25f + Flat3(_stumbleDir) * 0.12f + lateral;
+            _stepTarget = under + vH * (_stepSwing + 0.05f) + Flat3(_stumbleDir) * 0.12f + lateral;
         }
         _stepT += dt;
-        const float swing = 0.28f;
         var calf = _bodies[_stepLeg == 0 ? _calfL : _calfR].Rb;
         var ankle = _stepLeg == 0 ? _ankleL : _ankleR;
-        float s = Mathf.Clamp01(_stepT / swing);
+        float s = Mathf.Clamp01(_stepT / _stepSwing);
         _stepTarget.y = _groundY;   // keep tracking the ground the body started on
         Vector3 goal = _stepTarget + Vector3.up * (0.06f + 0.12f * Mathf.Sin(Mathf.PI * s));
-        Vector3 v = calf.GetPointVelocity(ankle.position);
+        // damped against the body's own speed, not the ground: a foot moving along with a fast stumble is not braked
+        Vector3 v = calf.GetPointVelocity(ankle.position) - vH;
         Vector3 f = calf.mass * (300f * (goal - ankle.position) - 35f * v);
-        calf.AddForceAtPosition(Vector3.ClampMagnitude(f, calf.mass * 60f) * support, ankle.position);
-        if (_stepT >= swing)
+        calf.AddForceAtPosition(Vector3.ClampMagnitude(f, calf.mass * (60f + 90f * _stepFast)) * support, ankle.position);
+        if (_stepT >= _stepSwing)
         {
             _stepLeg = -1;
-            _stepRest = 0.08f;
+            _stepRest = Mathf.Lerp(0.08f, 0.02f, _stepFast);
         }
     }
 
