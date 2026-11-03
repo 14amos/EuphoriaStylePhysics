@@ -74,7 +74,7 @@ internal static class CorpseWake
         {
             Player me = Singleton<GameWorld>.Instantiated ? Singleton<GameWorld>.Instance.MainPlayer : null;
             bool on = Plugin.IsOn && Plugin.CorpseWakeOn.Value && me != null;
-            // 0.17.6 (user: "i dont want frozen ragdolls at all if possible"): every corpse counts as near, so EFT never freezes one
+            // 0.19.0 (user: "i dont want frozen ragdolls at all if possible"): every corpse counts as near, so EFT never freezes one
             bool always = on && Plugin.CorpseNeverFreeze.Value;
             float r = Plugin.CorpseWakeDistance.Value;
             Vector3 at = me != null ? me.Position : Vector3.zero;

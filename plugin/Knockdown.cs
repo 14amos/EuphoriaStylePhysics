@@ -89,7 +89,7 @@ internal static class Knockdown
     private static readonly List<(int a, int b)> _worldPairs = new List<(int, int)>();
 
     internal static bool IsFrozen(Player p) => p != null && States.TryGetValue(p, out var s) && s.Phase == Phase.Down;
-    // a time between min and max; 4. Knockdowns / Variety 0 = always the middle, 1 = anywhere (0.17.6)
+    // a time between min and max; 4. Knockdowns / Variety 0 = always the middle, 1 = anywhere (0.19.0)
     private static float Spread(float min, float max)
     {
         float mid = 0.5f * (min + max), half = 0.5f * (max - min) * Mathf.Clamp01(Plugin.KnockdownVariety.Value);
