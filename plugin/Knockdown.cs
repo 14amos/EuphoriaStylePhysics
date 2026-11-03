@@ -139,12 +139,13 @@ internal static class Knockdown
     {
         if (!Plugin.KnockdownEnabled.Value || !Plugin.BlastKnockdown.Value || _errors > 20) return false;
         if (player == null || player.IsYourPlayer || !player.IsAI || player.AIData?.BotOwner == null || IsActive(player)) return false;
-        if (player.HealthController == null || !player.HealthController.IsAlive || closeness < 0.25f) return false;
+        // 0.17.5: "inner half of the blast reach", as described (was a quarter)
+        if (player.HealthController == null || !player.HealthController.IsAlive || closeness < 0.5f) return false;
         float now = Time.time;
         if (LastDown.TryGetValue(player, out float last) && now - last < Plugin.KnockdownCooldown.Value) return false;
-        if (_rnd.NextDouble() >= Plugin.BlastKnockdownChance.Value) return false;
         Prune(LastDown);
-        LastDown[player] = now;
+        LastDown[player] = now;   // 0.17.5: a failed roll waits for the cooldown too, as hits do
+        if (_rnd.NextDouble() >= Plugin.BlastKnockdownChance.Value) return false;
         Vector3 away = player.Position - at;
         away.y = 0f;
         if (away.sqrMagnitude < 1e-4f) away = player.Transform.rotation * Vector3.back;
@@ -260,7 +261,7 @@ internal static class Knockdown
     // On a Fika client: the host knocked this bot down; play it on our copy (no AI here, the host moves it).
     internal static void StartRemote(Player p, Vector3 hitPoint, Vector3 dir, float damage, EBodyPart part, bool blast, float sitFor, Vector3? shooter)
     {
-        if (!Plugin.Enabled.Value || !Plugin.KnockdownEnabled.Value) return;
+        if (!Plugin.IsOn || !Plugin.KnockdownEnabled.Value) return;
         var info = new DamageInfo
         {
             DamageType = blast ? EDamageType.Explosion : EDamageType.Bullet,

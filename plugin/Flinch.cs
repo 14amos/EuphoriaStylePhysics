@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using Comfort.Common;
 using EFT;
 using EFT.Ballistics;
+using EFT.InventoryLogic;
 using UnityEngine;
 using UnityEngine.LowLevel;
 using UnityEngine.PlayerLoop;
@@ -22,7 +24,8 @@ internal static class Flinch
         public Transform T;
         public int Parent = -1;     // index in the rig, -1 for the pelvis
         public float Wn;
-        public float Max = 0.6f;     // largest bend, rad
+        public float Max = 0.6f;
+        public bool Torso;           // 0.17.5: pelvis, spine, neck, head: a hit tips the bone's top the way the round went     // largest bend, rad
         public Vector3 Theta, Omega; // rotation vector (rad, world space) and its rate
         public Vector3 Hold;         // 0.16.1: where the spring rests this frame (a held lean); zero = the animated pose
     }
@@ -49,6 +52,8 @@ internal static class Flinch
     internal static void SavePos(Transform t) => SavedPos.Add(new KeyValuePair<Transform, Vector3>(t, t.localPosition));
     private static readonly List<Player> Drop = new List<Player>();
     private static float _lastCheck;
+    private static bool _noLoop;   // 0.17.5: the player loop could not be set up this session (was saved as Hit flinch = false)
+    private static bool SpringsOn => Plugin.FlinchEnabled.Value || Plugin.BlastFlinch.Value;   // 0.17.5: Explosion flinch has its own switch
     private static int _hits, _errors;
 
     // ---------------------------------------------------------------- player loop
@@ -68,17 +73,17 @@ internal static class Flinch
         }
         catch (Exception e)
         {
-            Plugin.Log.LogError($"[EuphoriaStylePhysics] player loop install failed, no hit flinch: {e}");
-            Plugin.FlinchEnabled.Value = false;
+            Plugin.Log.LogError($"[EuphoriaStylePhysics] player loop install failed, no hit flinch this session: {e}");
+            _noLoop = true;   // 0.17.5: was saved as Hit flinch = false, silently off on every later launch
         }
     }
 
     // Another mod (or the game) may set its own player loop later: put ours back.
     internal static void KeepInstalled()
     {
-        if (Time.unscaledTime - _lastCheck < 5f) return;
+        if (Time.unscaledTime - _lastCheck < 1f) return;   // 0.17.5: was 5 s: another mod swaps the loop now and then
         _lastCheck = Time.unscaledTime;
-        if (!Plugin.FlinchEnabled.Value || Has(PlayerLoop.GetCurrentPlayerLoop(), typeof(ApplyStep))) return;
+        if (_noLoop || !SpringsOn || Has(PlayerLoop.GetCurrentPlayerLoop(), typeof(ApplyStep))) return;
         Undo();
         Plugin.Log.LogWarning("[EuphoriaStylePhysics] flinch steps were gone from the player loop (replaced by someone), putting them back");
         Install();
@@ -116,7 +121,7 @@ internal static class Flinch
     internal static void OnHit(Player player, DamageInfo shot, EBodyPart part)
     {
         if (player == null || player.IsYourPlayer || player.HealthController == null || !player.HealthController.IsAlive) return;
-        if (_errors > 20 || Knockdown.IsActive(player)) return;
+        if (_noLoop || _errors > 20 || Knockdown.IsActive(player)) return;
         var cam = Camera.main;
         if (cam != null && (cam.transform.position - player.Position).sqrMagnitude > Plugin.FlinchMaxDistance.Value * Plugin.FlinchMaxDistance.Value) return;
         Vector3 dir = shot.Direction;
@@ -149,12 +154,29 @@ internal static class Flinch
         if (hit < 0) return;
 
         bool melee = (shot.DamageType & (EDamageType.Melee | EDamageType.Blunt)) != 0;
-        float s = Plugin.FlinchScale.Value * Mathf.Clamp(0.35f + shot.Damage / 50f, 0.35f, 1.6f) * (melee ? 0.8f : 1f);
+        // 0.17.5 (user: "does hit flinch do anything at all?"): shot.Damage is what got through the armor, 0 for a blocked round,
+        // so armored chests barely moved. The round hits just as hard either way: scale by the ammo's own damage.
+        float dmg = RoundDamage(shot);
+        float s = Plugin.FlinchScale.Value * Mathf.Clamp(0.35f + dmg / 50f, 0.35f, 1.6f) * (melee ? 0.8f : 1f);
         float gain = 7f * s * (hit == rig.Head && Plugin.FlinchHeadSnap.Value ? 1.4f : 1f), fall = 1f;
+        Vector3 up = player.Transform.up;
         for (int i = hit, guard = 0; i >= 0 && guard < 16; i = rig.Bones[i].Parent, guard++)
         {
             var b = rig.Bones[i];
-            Vector3 axis = Vector3.Cross(shot.HitPoint - b.T.position, dir);
+            Vector3 r = shot.HitPoint - b.T.position;
+            Vector3 axis;
+            if (b.Torso)
+            {
+                // 0.17.5: the old lever (hit point x direction) bent a bone whose pivot sat above the hit point TOWARD the shooter
+                // while its parents bent away: an S that cancelled on screen. The whole chain tips the way the round went (as the
+                // blast does), plus a twist about the spine from how far off-centre the round landed.
+                Vector3 tip = Vector3.Cross(up, dir);
+                Vector3 lat = r - up * Vector3.Dot(r, up) - dir * Vector3.Dot(r, dir);
+                Vector3 twist = Vector3.Cross(lat, dir) / 0.15f;   // full twist 15 cm off the bone's line
+                if (twist.sqrMagnitude > 1f) twist.Normalize();
+                axis = tip + twist;
+            }
+            else axis = Vector3.Cross(r, dir);   // a limb hangs from its joint: the round pushes the hit point along its way
             if (axis.sqrMagnitude > 1e-6f) b.Omega += axis.normalized * (gain * fall);
             fall *= 0.6f;
         }
@@ -184,12 +206,34 @@ internal static class Flinch
                                $"dmg {shot.Damage:F0} {shot.DamageType}, strength {s:F2}");
     }
 
+    // the round's own damage (its ammo template), or what got through when the ammo is not known
+    private static readonly Dictionary<string, float> AmmoDamage = new Dictionary<string, float>();
+    internal static float RoundDamage(DamageInfo shot)
+    {
+        float through = shot.Damage;
+        string id = shot.SourceId;
+        if (string.IsNullOrEmpty(id)) return through;
+        if (!AmmoDamage.TryGetValue(id, out float round))
+        {
+            round = 0f;
+            try
+            {
+                if (Singleton<ItemFactory>.Instantiated && Singleton<ItemFactory>.Instance.ItemTemplates.TryGetValue(id, out var t) &&
+                    t is AmmoTemplate ammo)
+                    round = ammo.Damage;
+            }
+            catch (Exception e) { Plugin.Log.LogWarning($"[EuphoriaStylePhysics] ammo template {id} not read: {e.Message}"); }
+            AmmoDamage[id] = round;
+        }
+        return Mathf.Max(through, round);
+    }
+
     // An explosion the player survives: the spine and head recoil away from it, the knees give a little.
     internal static bool OnBlast(Player player, Vector3 at, float strength)
     {
         if (player == null || player.IsYourPlayer || player.HealthController == null || !player.HealthController.IsAlive || strength <= 0.05f) return false;
         if (Knockdown.IsActive(player)) return false;
-        if (_errors > 20) return false;
+        if (_noLoop || _errors > 20) return false;
         var cam = Camera.main;
         if (cam != null && (cam.transform.position - player.Position).sqrMagnitude > Plugin.FlinchMaxDistance.Value * Plugin.FlinchMaxDistance.Value) return false;
         if (!Rigs.TryGetValue(player, out var rig))
@@ -244,12 +288,12 @@ internal static class Flinch
             Plugin.Log.LogWarning($"[EuphoriaStylePhysics] {player.Profile?.Nickname}: pelvis/spine bones not found, no flinch");
             return null;
         }
-        rig.Pelvis = Add(rig, pelvis, -1, 12f);
-        rig.Spine1 = Add(rig, spine1, rig.Pelvis, 13f);
-        rig.Spine2 = Add(rig, spine2, Last(rig.Spine1, rig.Pelvis), 13f);
-        rig.Spine3 = Add(rig, spine3, Last(rig.Spine2, rig.Spine1, rig.Pelvis), 13f);
-        rig.Neck = Add(rig, neck, rig.Spine3, 11f);
-        rig.Head = Add(rig, head, Last(rig.Neck, rig.Spine3), 11f);
+        rig.Pelvis = Add(rig, pelvis, -1, 12f, torso: true);
+        rig.Spine1 = Add(rig, spine1, rig.Pelvis, 13f, torso: true);
+        rig.Spine2 = Add(rig, spine2, Last(rig.Spine1, rig.Pelvis), 13f, torso: true);
+        rig.Spine3 = Add(rig, spine3, Last(rig.Spine2, rig.Spine1, rig.Pelvis), 13f, torso: true);
+        rig.Neck = Add(rig, neck, rig.Spine3, 11f, torso: true);
+        rig.Head = Add(rig, head, Last(rig.Neck, rig.Spine3), 11f, torso: true);
         rig.ThighL = Add(rig, thighL, rig.Pelvis, 16f);
         rig.ThighR = Add(rig, thighR, rig.Pelvis, 16f);
         rig.CalfL = Add(rig, thighL != null ? Find(thighL, "calf") : null, rig.ThighL, 16f);
@@ -269,10 +313,10 @@ internal static class Flinch
         return rig;
     }
 
-    private static int Add(Rig rig, Transform t, int parent, float wn, float max = 0.6f)
+    private static int Add(Rig rig, Transform t, int parent, float wn, float max = 0.6f, bool torso = false)
     {
         if (t == null) return -1;
-        rig.Bones.Add(new Bone { T = t, Parent = parent, Wn = wn, Max = max });
+        rig.Bones.Add(new Bone { T = t, Parent = parent, Wn = wn, Max = max, Torso = torso });
         return rig.Bones.Count - 1;
     }
 
@@ -311,7 +355,7 @@ internal static class Flinch
             {
                 var rig = kv.Value;
                 var p = rig.Player;
-                if (p == null || p.HealthController == null || !p.HealthController.IsAlive || !Plugin.FlinchEnabled.Value || !Plugin.Enabled.Value ||
+                if (p == null || p.HealthController == null || !p.HealthController.IsAlive || !SpringsOn || !Plugin.IsOn ||
                     Knockdown.IsActive(p))
                 {
                     Drop.Add(kv.Key);
@@ -352,7 +396,9 @@ internal static class Flinch
             {
                 b.Omega += (-b.Wn * b.Wn * (b.Theta - b.Hold) - 2f * Zeta * b.Wn * b.Omega) * h;
                 b.Theta += b.Omega * h;
-                float max = Mathf.Max(b.Max, b.Hold.magnitude + 0.15f);   // a held pose (a flailing arm) may go past the flinch limit
+                // 0.17.5: the bend limit grows with Flinch strength up to 2x, or past ~1.3 the hit bone only met its limit and the
+                // slider did little more
+                float max = Mathf.Max(b.Max * Mathf.Clamp(Plugin.FlinchScale.Value, 1f, 2f), b.Hold.magnitude + 0.15f);   // a held pose (a flailing arm) may go past the flinch limit
                 if (b.Theta.sqrMagnitude > max * max)
                 {
                     b.Theta = b.Theta.normalized * max;

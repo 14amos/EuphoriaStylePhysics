@@ -39,7 +39,7 @@ internal static class CorpseWake
         SmoothCollisions(corpse.Ragdoll);
         var orig = corpse.Ragdoll._checkCorpseIsStill;
         if (orig != null)
-            corpse.Ragdoll._checkCorpseIsStill = (sleeping, t) => orig(sleeping, t) && !(Plugin.Enabled.Value && Plugin.CorpseWakeOn.Value && e.Near);
+            corpse.Ragdoll._checkCorpseIsStill = (sleeping, t) => orig(sleeping, t) && !(Plugin.IsOn && Plugin.CorpseWakeOn.Value && e.Near);
     }
 
     private static Vector3 BodyPos(Entry e)
@@ -62,7 +62,7 @@ internal static class CorpseWake
             c = rb.GetComponentInParent<Corpse>();
             CorpseOf[rb] = c;
         }
-        return c != null && ByCorpse.TryGetValue(c, out var e) && e.Near && Plugin.Enabled.Value && Plugin.CorpseWakeOn.Value;
+        return c != null && ByCorpse.TryGetValue(c, out var e) && e.Near && Plugin.IsOn && Plugin.CorpseWakeOn.Value;
     }
     private static readonly Dictionary<Rigidbody, Corpse> CorpseOf = new Dictionary<Rigidbody, Corpse>();
 
@@ -73,7 +73,7 @@ internal static class CorpseWake
         try
         {
             Player me = Singleton<GameWorld>.Instantiated ? Singleton<GameWorld>.Instance.MainPlayer : null;
-            bool on = Plugin.Enabled.Value && Plugin.CorpseWakeOn.Value && me != null;
+            bool on = Plugin.IsOn && Plugin.CorpseWakeOn.Value && me != null;
             float r = Plugin.CorpseWakeDistance.Value;
             Vector3 at = me != null ? me.Position : Vector3.zero;
             _awake = 0;
@@ -116,14 +116,14 @@ internal static class CorpseWake
     // keep it on the surface. EFT sets Discrete again when it freezes the corpse.
     internal static void SmoothCollisions(CorpseRagdoll rag)
     {
-        if (rag == null || !Plugin.SmoothCollisions.Value || !Plugin.Enabled.Value) return;   // 0.17.5: master switch too
+        if (rag == null || !Plugin.SmoothCollisions.Value || !Plugin.IsOn) return;   // 0.17.5: master switch too
         foreach (var s in rag._rigidbodySpawners)
             if (s != null && s.Rigidbody != null && !s.Rigidbody.isKinematic) Smooth(s.Rigidbody);
     }
 
     private static void Smooth(Rigidbody rb)
     {
-        if (!Plugin.SmoothCollisions.Value || !Plugin.Enabled.Value) return;
+        if (!Plugin.SmoothCollisions.Value || !Plugin.IsOn) return;
         rb.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
         rb.solverIterations = Mathf.Max(rb.solverIterations, 12);
         rb.solverVelocityIterations = Mathf.Max(rb.solverVelocityIterations, 4);
@@ -135,7 +135,7 @@ internal static class CorpseWake
     // stair tread fails that from above. A body part hit within 0.25 m behind such a surface still counts; walls stay walls.
     internal static void FindInteractablePostfix(Ray ray, ref RaycastHit hit, ref GameObject __result)
     {
-        if (__result != null || !Plugin.Enabled.Value || !Plugin.SearchThroughFloor.Value) return;
+        if (__result != null || !Plugin.IsOn || !Plugin.SearchThroughFloor.Value) return;
         try
         {
             float dist = Mathf.Max(EFTHardSettings.Instance.LOOT_RAYCAST_DISTANCE, EFTHardSettings.Instance.PLAYER_RAYCAST_DISTANCE + EFTHardSettings.Instance.BEHIND_CAST);

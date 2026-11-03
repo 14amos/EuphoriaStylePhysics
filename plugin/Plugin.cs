@@ -32,6 +32,8 @@ public sealed class Plugin : BaseUnityPlugin
     internal static ConfigEntry<StylePreset> Preset;
     internal static ConfigEntry<bool> PresetApplied;
     internal static ConfigEntry<int> PresetRevision;
+    private static bool _patchFailed;
+    internal static bool IsOn => Enabled.Value && !_patchFailed;   // the master switch, and patching worked this session
     internal static ConfigEntry<float> Consistency;
     internal static ConfigEntry<bool> RealTimePhysics;
 
@@ -108,7 +110,7 @@ public sealed class Plugin : BaseUnityPlugin
         // 0.9.0 (user: every main feature toggleable with ease): the main switches all sit in "1. General", first in F12
         const string g = "1. General", d = "2. Dying", f = "3. Living hits", k = "4. Knockdowns";
         Enabled = Config.Bind(g, "Enabled", true, "Master switch.");
-        VerboseLog = Config.Bind(g, "Verbose log", false, "Log every hit flinch too (deaths are always logged).");
+        VerboseLog = Config.Bind(g, "Verbose log", false, "More detail in the BepInEx log for every part of the mod: each flinch, corpse, knockdown and skipped death (deaths are always logged).");
         Preset = Config.Bind(g, "Style preset", StylePreset.Euphoric,
             "Euphoric: sets every value below for Euphoria-style bodies (consistent stagger, hand to the wound, knees give, "
             + "headshots drop at once, survivors flinch and keep fighting). The experimental gameplay part (knockdowns) stays off; "
@@ -129,10 +131,10 @@ public sealed class Plugin : BaseUnityPlugin
             "MAIN SWITCH (visual). A body killed on its feet keeps its muscles for a moment: stumbles, hand on the wound, knees give, "
             + "lies hurt. Off: EFT's own ragdoll. Details in 2. Dying.");
         FlinchEnabled = Config.Bind(g, "Hit flinch", true,
-            "MAIN SWITCH (visual). Bots and other players hit by a round flinch on top of EFT's own hit reaction. Never your own body. "
-            + "Details in 3. Living hits.");
+            "MAIN SWITCH (visual). Bots and other players hit by a round flinch on top of EFT's own hit reaction: a short snap (about "
+            + "a quarter second) of the spine, head, a knee or an arm. Never your own body. Details in 3. Living hits.");
         BlastFlinch = Config.Bind(g, "Explosion flinch", true,
-            "MAIN SWITCH (visual). Bots and other players near an explosion they survive recoil away from it.");
+            "MAIN SWITCH (visual). Bots and other players near an explosion they survive recoil away from it. Strength: Flinch strength.");
         // 0.17.3 (user: ragdolls keep moving when you are near)
         CorpseWakeOn = Config.Bind(g, "Corpses stay physical near you", true,
             "MAIN SWITCH (visual). EFT freezes a corpse once it lies still; near you it stays a ragdoll (or becomes one again), so "
@@ -142,12 +144,13 @@ public sealed class Plugin : BaseUnityPlugin
             "MAIN SWITCH, EXPERIMENTAL (gameplay: the bot cannot shoot while down). A bot hit hard goes down on its own ragdoll and gets back up. "
             + "Only where the bots' AI runs. Details in 4. Knockdowns.");
         DropDeadChance = Config.Bind(d, "Drop dead chance", 0.25f,
-            new ConfigDescription("Share of kills that go limp on the spot (EFT's own ragdoll).", new AcceptableValueRange<float>(0f, 1f)));
+            new ConfigDescription("Share of the kills our dying would play that go limp on the spot instead (EFT's own ragdoll).", new AcceptableValueRange<float>(0f, 1f)));
         HeadshotLegsGoChance = Config.Bind(d, "Headshot: legs go at once", 0.25f,
-            new ConfigDescription("Share of headshot kills whose legs give at once; the rest ripple: head snaps, upper body follows, legs last.",
+            new ConfigDescription("Share of standing headshot kills whose legs give at once; the rest ripple: head snaps, upper body follows, legs last. "
+                + "Crouched or running headshots slump or tumble instead.",
                 new AcceptableValueRange<float>(0f, 1f)));
         HeadshotInstantDrop = Config.Bind(d, "Headshots drop instantly", false,
-            "On: every headshot kill drops on the spot, limp (EFT's own ragdoll). Off: headshots ripple or the legs go (see above).");
+            "On: every bullet headshot kill drops on the spot, limp (EFT's own ragdoll). Off: headshots ripple or the legs go (see above).");
         DyingTimeMin = Config.Bind(d, "Dying time min (s)", 0.6f,
             new ConfigDescription("Shortest time a body shot in the torso or a limb stays on its feet.", new AcceptableValueRange<float>(0.2f, 6f)));
         DyingTimeMax = Config.Bind(d, "Dying time max (s)", 1.6f,
@@ -195,24 +198,27 @@ public sealed class Plugin : BaseUnityPlugin
             new ConfigDescription("How far a wall (or the top of a crate, table, low cover) may be for a dying body to stagger to it and put a hand on it.",
                 new AcceptableValueRange<float>(0.5f, 3f)));
         MaxDying = Config.Bind(d, "Most bodies dying at once", 10,
-            new ConfigDescription("More than this at the same time: the rest use EFT's own ragdoll.", new AcceptableValueRange<int>(1, 40)));
+            new ConfigDescription("More deaths than this playing at the same time: the rest use EFT's own ragdoll. Knockdowns do not count.", new AcceptableValueRange<int>(1, 40)));
         MaxDistance = Config.Bind(d, "Dying max distance (m)", 150f,
             new ConfigDescription("Farther from the camera: EFT's own ragdoll (saves time).", new AcceptableValueRange<float>(20f, 1000f)));
         CorpseHits = Config.Bind(d, "Rounds push dying bodies", false,
             "Our own push: a round into a body that is dying or still falling pushes the part it hits. With RealTargets: leave this "
             + "off, its Impacts already push bodies and both together push twice as hard. Without RealTargets: turn it on.");
         LieWoundedChance = Config.Bind(d, "Lying wounded chance", 0.4f,
-            new ConfigDescription("Share of bodies that lie hurt for 2-5 s after the fall (curl up, a hand on the wound or reaching out) before going still.",
+            new ConfigDescription("Share of bodies that lie hurt for 2-5 s after the fall (curl up, a hand on the wound or reaching out) before going still. "
+                + "Not after headshots or blasts.",
                 new AcceptableValueRange<float>(0f, 1f)));
         MeleeClutch = Config.Bind(d, "Knife deaths clutch", true,
             "A knife or a blow to the chest or stomach that kills: both hands go to the wound and it folds onto its knees.");
         LookAtShooter = Config.Bind(d, "Head turns to the shooter", true, "A dying body turns its head toward whoever shot it.");
         ReachToShooter = Config.Bind(d, "Reach toward the shooter", true, "Lying hurt, about half reach their free hand toward the shooter.");
         BurstKeepsUp = Config.Bind(d, "Rounds keep a dying body up", true,
-            "A dying body hit again stays on its feet a little longer (+0.12 s per round, at most +0.7 s): a burst keeps it dancing.");
+            "A dying body hit again stays on its feet a little longer (+0.08 s per round, at most +0.35 s): a burst keeps it up.");
         CorpseHitScale = Config.Bind(d, "Round push strength", 1f, new ConfigDescription("", new AcceptableValueRange<float>(0f, 3f)));
 
-        FlinchScale = Config.Bind(f, "Flinch strength", 1f, new ConfigDescription("", new AcceptableValueRange<float>(0f, 3f)));
+        FlinchScale = Config.Bind(f, "Flinch strength", 1f, new ConfigDescription("How hard a hit rocks a living bot (visual, needs Hit flinch). "
+            + "Scales with the round, not the damage that got through, so an armour-stopped hit still rocks the body. 0 = no flinch, "
+            + "1 = normal, 2-3 = big (the bend limit grows with it up to 2). Also scales the explosion flinch.", new AcceptableValueRange<float>(0f, 3f)));
         FlinchMaxDistance = Config.Bind(f, "Flinch max distance (m)", 120f,
             new ConfigDescription("Farther from the camera: no flinch (saves time).", new AcceptableValueRange<float>(10f, 1000f)));
         FlinchLegDip = Config.Bind(f, "Leg hit: knee dips", true, "A leg hit bends the knee for a moment.");
@@ -223,12 +229,12 @@ public sealed class Plugin : BaseUnityPlugin
         FlinchArms = Config.Bind(f, "Arm hit: arm jerks", true, "An arm hit knocks the arm back for a moment (the hand may leave the gun briefly).");
 
         KnockdownImpact = Config.Bind(k, "Hit strength to go down", 80f,
-            new ConfigDescription("Damage that has to land within 0.4 s (a burst, shotgun pellets; leg hits count 1.5x; rounds stopped by armour count 8).",
+            new ConfigDescription("Damage that has to land within 0.4 s (a burst, shotgun pellets; leg hits count 1.5x; any hit counts at least 8).",
                 new AcceptableValueRange<float>(10f, 400f)));
         KnockdownChance = Config.Bind(k, "Chance to go down", 0.5f,
             new ConfigDescription("Share of hits strong enough that really knock it down.", new AcceptableValueRange<float>(0f, 1f)));
         KnockdownCooldown = Config.Bind(k, "Cooldown (s)", 8f,
-            new ConfigDescription("After a knockdown (or a failed roll), this long before the same bot can go down again.", new AcceptableValueRange<float>(0f, 60f)));
+            new ConfigDescription("From a bot going down (or a failed roll), this long before it can go down again. A long stay-down can use it all up.", new AcceptableValueRange<float>(0f, 60f)));
         KnockdownLieMin = Config.Bind(k, "Time on the ground min (s)", 1.5f, new ConfigDescription("", new AcceptableValueRange<float>(0.3f, 10f)));
         KnockdownLieMax = Config.Bind(k, "Time on the ground max (s)", 3f, new ConfigDescription("", new AcceptableValueRange<float>(0.3f, 15f)));
         KnockdownMisfireChance = Config.Bind(k, "Misfire chance", 0.5f,
@@ -243,8 +249,8 @@ public sealed class Plugin : BaseUnityPlugin
         KnockdownWrithe = Config.Bind(k, "Writhe while down", true,
             "A knocked-down bot rolls a little and draws a knee up now and then, so you can tell it from a dead one.");
         StayDownEnabled = Config.Bind(k, "Bad leg: stay down and fight", true,
-            "A knocked-down bot with a destroyed or badly hurt leg may not get up: it stays prone (EFT has no sitting pose for bots), "
-            + "crawls and fires back for a while, then struggles up. Needs \"Get up through prone\".");
+            "A knocked-down bot with a destroyed or badly hurt leg may not get up for a while: it sits or lies prone (see Bad leg: "
+            + "pose) and fires back, then struggles up. The Prone pose needs \"Get up through prone\".");
         BadLegPose = Config.Bind(k, "Bad leg: pose", LegPose.Sit,
             "Sit: sits up on its own ragdoll, turns to the shooter and fires short bursts at him (the mod aims and fires the gun). "
             + "Prone: lies in EFT's prone and fights with its own AI.");
@@ -317,8 +323,8 @@ public sealed class Plugin : BaseUnityPlugin
         }
         catch (Exception e)
         {
-            Log.LogError($"[EuphoriaStylePhysics] patching failed, mod off: {e}");
-            Enabled.Value = false;
+            Log.LogError($"[EuphoriaStylePhysics] patching failed, mod off for this session: {e}");
+            _patchFailed = true;   // 0.17.5: was saved as Enabled = false, off on every later launch
         }
 
         Preset.SettingChanged += (_, __) => { if (Preset.Value == StylePreset.Euphoric) ApplyEuphoric("picked in the settings"); };
@@ -440,7 +446,7 @@ public sealed class Plugin : BaseUnityPlugin
         // dragged to its palm, agony lines from the corpse
         try { var dead = __instance != null ? __instance.GetComponent<Player>() : null; if (dead != null) Knockdown.OnDeath(dead); }
         catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] knockdown not ended at death: {e.Message}"); }
-        if (!Enabled.Value || !DeathEnabled.Value || forceStill || __instance == null || __instance.Ragdoll == null) return;
+        if (!IsOn || !DeathEnabled.Value || forceStill || __instance == null || __instance.Ragdoll == null) return;
         try
         {
             var player = __instance.GetComponent<Player>();
@@ -455,7 +461,7 @@ public sealed class Plugin : BaseUnityPlugin
 
     private static void BodyPartHitPostfix(BodyPartCollider __instance, DamageInfo damageInfo)
     {
-        if (!Enabled.Value || !damageInfo.IsForwardHit) return;
+        if (!IsOn || !damageInfo.IsForwardHit) return;
         try
         {
             var rb = damageInfo.HitCollider != null ? damageInfo.HitCollider.attachedRigidbody : null;
@@ -474,7 +480,7 @@ public sealed class Plugin : BaseUnityPlugin
 
     private static void OnExplosion(Vector3 position, float maxDistance)
     {
-        if (!Enabled.Value) return;
+        if (!IsOn) return;
         try
         {
             if (!Singleton<GameWorld>.Instantiated) return;
@@ -486,7 +492,7 @@ public sealed class Plugin : BaseUnityPlugin
                 float dist = Vector3.Distance(p.Position, position);
                 if (dist > reach) continue;
                 if (Knockdown.OnBlast(p, position, 1f - dist / reach)) { down++; continue; }
-                if (FlinchEnabled.Value && BlastFlinch.Value && Flinch.OnBlast(p, position, 2f * (1f - dist / reach))) n++;
+                if (BlastFlinch.Value && Flinch.OnBlast(p, position, 2f * (1f - dist / reach))) n++;   // 0.17.5: its own switch, not gated by Hit flinch
             }
             if (n > 0 || down > 0 || VerboseLog.Value)
                 Log.LogInfo($"[EuphoriaStylePhysics] explosion (reach {reach:F1} m): {down} thrown down, {n} survivor(s) recoil");
@@ -638,7 +644,7 @@ public sealed class Plugin : BaseUnityPlugin
     // FPS physics runs behind real time. While our bodies move, step the rest of the way once per frame.
     private void LateUpdate()
     {
-        if (!Enabled.Value || !RealTimePhysics.Value || Physics.simulationMode != SimulationMode.Script ||
+        if (!IsOn || !RealTimePhysics.Value || Physics.simulationMode != SimulationMode.Script ||
             DeathMotion.ActiveCount + Knockdown.Count == 0)
         {
             _simTime = _realTime = 0f;
@@ -674,7 +680,7 @@ public sealed class Plugin : BaseUnityPlugin
 
     private static void ShotReactionsPostfix(Player __instance, DamageInfo shot, EBodyPart bodyPart)
     {
-        if (!Enabled.Value) return;
+        if (!IsOn) return;
         DeathMotion.RecordHit(__instance, shot, bodyPart);
         if (Knockdown.IsActive(__instance))
             Log.LogInfo($"[EuphoriaStylePhysics] hit while down: {__instance.Profile?.Nickname} {bodyPart} dmg {shot.Damage:F0} "

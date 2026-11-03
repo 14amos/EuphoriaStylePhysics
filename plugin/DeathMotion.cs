@@ -180,9 +180,11 @@ internal sealed class DeathMotion : MonoBehaviour
     {
         if (_errors > 20) return;
         string who = player.Profile?.Nickname ?? player.ProfileId;
-        if (Active.Count >= Plugin.MaxDying.Value)
+        int dyingNow = 0;
+        foreach (var a in Active) if (a != null && !a._knock) dyingNow++;   // 0.17.5: knockdowns do not use up the cap
+        if (dyingNow >= Plugin.MaxDying.Value)
         {
-            Plugin.Log.LogInfo($"[EuphoriaStylePhysics] {who} dies with EFT's ragdoll: {Active.Count} bodies already dying (max {Plugin.MaxDying.Value})");
+            Plugin.Log.LogInfo($"[EuphoriaStylePhysics] {who} dies with EFT's ragdoll: {dyingNow} bodies already dying (max {Plugin.MaxDying.Value})");
             return;
         }
         var cam = Camera.main;
@@ -378,6 +380,14 @@ internal sealed class DeathMotion : MonoBehaviour
         Vector3 vel = Vector3.zero;
         try { vel = player.Velocity; } catch { /* observed players without a movement context */ }
         _runVel = Flat3(vel);
+        // 0.17.5 (log: "dies: Tumble ... speed 17.7 m/s", body thrown 6.9 m): EFT's velocity can be a jump in position, not a run.
+        // No bot runs past ~7 m/s: above 9 it is ignored, a real sprint is held to 7.
+        if (_runVel.magnitude > 9f)
+        {
+            Plugin.Log.LogInfo($"[EuphoriaStylePhysics] {player.Profile?.Nickname ?? player.ProfileId}: speed at death {_runVel.magnitude:F1} m/s is not a run, ignored");
+            _runVel = Vector3.zero;
+        }
+        else if (_runVel.magnitude > 7f) _runVel = _runVel.normalized * 7f;
         bool running = Plugin.RunTumble.Value && !crouched && _runVel.magnitude > 2.5f;
 
         bool weapon = (type & (EDamageType.Bullet | EDamageType.Sniper | EDamageType.Melee | EDamageType.Blunt | EDamageType.Impact)) != 0;
@@ -486,7 +496,8 @@ internal sealed class DeathMotion : MonoBehaviour
         }
         _braces = Plugin.GroundBrace.Value && _style != Style.HeadLegsGo && _style != Style.Blast && (_style == Style.Tumble || _style == Style.Knock || Often(0.7f));
 
-        if (_knock || _style != Style.HeadLegsGo && _style != Style.HeadRipple && _rnd.NextDouble() < Plugin.LieWoundedChance.Value)
+        // 0.17.5 ("Blast throw" says blast kills go limp; half of them lay hurt): not after a blast
+        if (_knock || _style != Style.HeadLegsGo && _style != Style.HeadRipple && _style != Style.Blast && _rnd.NextDouble() < Plugin.LieWoundedChance.Value)
         {
             _lieHurt = true;
             _hurtFrom = _dur + 0.3f;
@@ -704,7 +715,7 @@ internal sealed class DeathMotion : MonoBehaviour
     {
         if (_aborted) { _endReason = "aborted"; return false; }
         if (_finishNow) { _endReason = "done"; return false; }
-        if (!Plugin.Enabled.Value || (_knock ? !Plugin.KnockdownEnabled.Value : !Plugin.DeathEnabled.Value)) { _endReason = "turned off"; return false; }
+        if (!Plugin.IsOn || (_knock ? !Plugin.KnockdownEnabled.Value : !Plugin.DeathEnabled.Value)) { _endReason = "turned off"; return false; }
         foreach (var b in _bodies)
             if (b.Rb == null) { _endReason = "a body part is gone"; return false; }   // dismemberment mod, or EFT removed the ragdoll
         var pelvis = _bodies[_pelvis].Rb;
