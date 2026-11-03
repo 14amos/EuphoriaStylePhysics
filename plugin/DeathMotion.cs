@@ -15,7 +15,9 @@ namespace EuphoriaStylePhysics;
 // so the body sags, stumbles and drops instead of folding at once. All of it is stepped right before each physics step.
 internal sealed class DeathMotion : MonoBehaviour
 {
-    private enum Style { Stagger, LegGives, HeadRipple, HeadLegsGo, Slump, Tumble, Clutch, Knock, Blast }
+    // 0.17.6 (user: "deaths lying down or in the air"): Ground = killed lying down, Airborne = killed with the feet off the ground;
+    // both were EFT's ragdoll before. No outside support for either (nothing to hold up, nothing to stand on).
+    private enum Style { Stagger, LegGives, HeadRipple, HeadLegsGo, Slump, Tumble, Clutch, Knock, Blast, Ground, Airborne }
     private enum Role { Other, Pelvis, Spine, Neck, Head, ThighL, ThighR, CalfL, CalfR, UpperL, UpperR, ForeL, ForeR, HandL, HandR, FootL, FootR }
     private enum Goal { None, Wall, Wound, Ground, Guard, Gun }
 
@@ -25,6 +27,7 @@ internal sealed class DeathMotion : MonoBehaviour
         public int Parent = -1;
         public Role Role;
         public Quaternion Rel0;   // rotation relative to the parent body when it died
+        public Quaternion RelGround = Quaternion.identity;   // 0.17.6: the same, in the pose it landed in (lying hurt moves around it)
         public float Wn;          // muscle natural frequency, rad/s
         public float Tone = 1f;   // per-body muscle multiplier (0: limp)
         public float RelaxTo = -1f;   // 0.17.5: a round just hit it: its muscle gives way until then
@@ -146,6 +149,7 @@ internal sealed class DeathMotion : MonoBehaviour
     private bool _momentumGiven;
     // catch steps
     private int _stepLeg = -1;
+    private bool _groundSnapped;   // 0.17.6: lying hurt took the landed pose as its rest pose
     private float _stepFast, _stepSwing = 0.28f;   // 0.17.5: how fast the push is (0-1) and this step's swing time
     // 0.17.6 feet planting: the step's goal for the swing leg's muscles, where the step began, what the steps did (log), the planted feet
     private int _steps;
@@ -374,11 +378,11 @@ internal sealed class DeathMotion : MonoBehaviour
                                    EDamageType.ThermobaricExplosion | EDamageType.Btr | EDamageType.HotGases;
         string cause = $"{type}/{part}";
         if (!_knock && Plugin.ExplosionsVanilla.Value && (type & blasts) != 0) return Skip($"blast ({cause})");
-        if (!_knock && (type & EDamageType.Fall) != 0) return Skip($"fall ({cause})");
-        if (!_knock && height < 0.38f) return Skip($"lying down (pelvis {height:F2} m above the feet)");
-        // 0.6.1 (user: bodies float right after dying): the feet must be on real ground, or the support would hold it in the air
+        bool fall = !_knock && (type & EDamageType.Fall) != 0;
+        bool lying = !_knock && height < 0.38f;
+        // 0.6.1 (user: bodies float right after dying): the support needs real ground under the feet; off it, Airborne has none
         float footGap = FootGap();
-        if (!_knock && footGap > 0.15f) return Skip($"feet off the ground ({footGap:F2} m: jumping, falling, vaulting)");
+        bool airborne = !_knock && !lying && footGap > 0.15f;
         bool crouched = height < 0.7f;
         if (!_knock && Plugin.HeadshotInstantDrop.Value && part == EBodyPart.Head && (type & (EDamageType.Bullet | EDamageType.Sniper)) != 0)
             return Skip($"headshot, instant drop ({cause})");
@@ -402,6 +406,8 @@ internal sealed class DeathMotion : MonoBehaviour
         bool blast = (type & blasts) != 0 && Plugin.BlastThrow.Value;
         if (blast) _style = Style.Blast;
         else if (_knock) _style = Style.Knock;
+        else if (airborne) _style = Style.Airborne;
+        else if (lying) _style = Style.Ground;
         else if (running) _style = Style.Tumble;
         else if (!weapon || info.HitPoint == Vector3.zero || crouched) _style = Style.Slump;
         else if (part == EBodyPart.Head) _style = _rnd.NextDouble() < Plugin.HeadshotLegsGoChance.Value ? Style.HeadLegsGo : Style.HeadRipple;
@@ -421,11 +427,14 @@ internal sealed class DeathMotion : MonoBehaviour
             Style.Tumble => Rand(0.35f, 0.6f),
             Style.Knock => Rand(0.35f, 0.6f),
             Style.Blast => 2.5f,   // the longest flight; cut short at the landing
+            Style.Airborne => 2.5f,   // the same: cut short when it comes down
+            Style.Ground => Rand(0.35f, 0.7f),   // the muscles hold its pose a moment, then let go
             Style.Clutch => Rand(1f, 2.2f),
             _ => Rand(min, max)
         };
+        if (fall && _style == Style.Slump) _dur = Rand(0.25f, 0.45f);   // fall damage kills on landing: the legs fold at once
         _legsGoAt = _style == Style.HeadRipple ? _dur * Rand(0.55f, 0.85f) : _dur;
-        _kneelAmount = _style switch { Style.Slump or Style.Clutch => 1f, Style.Tumble or Style.Knock => Rand(0.5f, 0.8f), _ => Rand(0.55f, 1f) };
+        _kneelAmount = _style switch { Style.Ground or Style.Airborne => 0f, Style.Slump or Style.Clutch => 1f, Style.Tumble or Style.Knock => Rand(0.5f, 0.8f), _ => Rand(0.55f, 1f) };
         _leanMax = _style switch { Style.Slump => Rand(20f, 35f), Style.Tumble => Rand(35f, 55f), Style.Knock => Rand(25f, 40f), Style.Clutch => Rand(30f, 45f), _ => Rand(10f, 30f) };
         _stumbleDir = _style == Style.Tumble ? _runVel.normalized : dir == Vector3.zero ? fwd : dir;
         bool melee = (type & (EDamageType.Melee | EDamageType.Blunt)) != 0;
@@ -481,7 +490,7 @@ internal sealed class DeathMotion : MonoBehaviour
         }
         if (_woundBody != null) _woundLocal = _woundBody.transform.InverseTransformPoint(info.HitPoint);
         if (Plugin.HandOnWound.Value && _woundBody != null &&
-            (_style == Style.Clutch || (_style == Style.Stagger || _style == Style.LegGives || _style == Style.Knock) && Often(0.75f)))
+            (_style == Style.Clutch || (_style == Style.Stagger || _style == Style.LegGives || _style == Style.Knock || _style == Style.Ground) && Often(0.75f)))
             ChooseWoundArm(right);
         if (_style == Style.Clutch && _woundArm >= 0 && _arms[1 - _woundArm].Ok) _woundArm2 = 1 - _woundArm;
 
@@ -501,7 +510,8 @@ internal sealed class DeathMotion : MonoBehaviour
                 _closeness = 0.6f;
             }
         }
-        _braces = Plugin.GroundBrace.Value && _style != Style.HeadLegsGo && _style != Style.Blast && (_style == Style.Tumble || _style == Style.Knock || Often(0.7f));
+        _braces = Plugin.GroundBrace.Value && _style != Style.HeadLegsGo && _style != Style.Blast && _style != Style.Ground
+                  && (_style == Style.Tumble || _style == Style.Knock || _style == Style.Airborne || Often(0.7f));
 
         // 0.17.5 ("Blast throw" says blast kills go limp; half of them lay hurt): not after a blast
         if (_knock || _style != Style.HeadLegsGo && _style != Style.HeadRipple && _style != Style.Blast && _rnd.NextDouble() < Plugin.LieWoundedChance.Value)
@@ -779,7 +789,7 @@ internal sealed class DeathMotion : MonoBehaviour
         {
             // EFT starts a corpse at most 2 m/s; a runner keeps most of its run
             _momentumGiven = true;
-            if (_style == Style.Tumble)
+            if (_style == Style.Tumble || _style == Style.Airborne && _runVel.sqrMagnitude > 0.25f)
                 foreach (var b in _bodies)
                     b.Rb.velocity = new Vector3(_runVel.x * 0.85f, b.Rb.velocity.y, _runVel.z * 0.85f);
             if (_style == Style.Blast && !_launched)
@@ -832,6 +842,19 @@ internal sealed class DeathMotion : MonoBehaviour
                 support = 0f;
                 kneel = 0f;
                 break;
+            case Style.Ground:
+                // lying already: holds its pose a moment (no hold-up, nothing to fall from), then goes limp; lying hurt may follow
+                tone = _t < 0.4f * d ? 1f : Mathf.Lerp(1f, 0f, Smooth(0.4f * d, d + 0.2f, _t));
+                support = 0f;
+                kneel = 0f;
+                break;
+            case Style.Airborne:
+                // in the air: half tone, arms out for the landing; down, it goes limp the way a standing death would
+                if (!_landed && _t > 0.1f && pelvis.velocity.y < 0.5f && (FootGap() < 0.1f || HeightAboveGround(pelvis.position) < 0.45f || _t > 2.5f)) Land();
+                tone = _landed ? Mathf.Lerp(0.6f, 0f, Smooth(_dur, _dur + 0.3f, _t)) : 0.6f;
+                support = 0f;
+                kneel = 0f;
+                break;
             case Style.Tumble:
             case Style.Knock:
                 tone = _t < d ? 1f - 0.5f * Smooth(0f, d, _t) : Mathf.Lerp(0.5f, 0f, Smooth(d, d + 0.25f, _t));
@@ -850,6 +873,15 @@ internal sealed class DeathMotion : MonoBehaviour
         }
         float hurt = _lieHurt ? Smooth(_hurtFrom, _hurtFrom + 0.5f, _t) * (1f - Smooth(_hurtTo - 1f, _hurtTo, _t)) : 0f;
         tone = Mathf.Max(tone, 0.3f * hurt);
+        // 0.17.6: the lying-hurt pose was an offset on the STANDING pose of the moment of death, so on a body lying down the muscles
+        // pulled it back toward standing (and threw bodies killed lying down). When lying hurt starts, the pose it actually landed in
+        // is taken as the new rest pose; the curl moves around that from then on.
+        if (!_knock && !_groundSnapped && hurt > 0.001f)
+        {
+            _groundSnapped = true;
+            foreach (var gb in _bodies)
+                if (gb.Parent >= 0) gb.RelGround = Quaternion.Inverse(_bodies[gb.Parent].Rb.rotation) * gb.Rb.rotation;
+        }
         _sitW = _sitFor > 0f ? Smooth(_sitFrom, _sitFrom + 0.9f, _t) * (1f - Smooth(_sitTo, _sitTo + 0.6f, _t)) : 0f;
         tone = Mathf.Max(tone, 0.65f * _sitW);
         tone *= Plugin.MuscleScale.Value;
@@ -886,10 +918,11 @@ internal sealed class DeathMotion : MonoBehaviour
             if (b.Parent < 0) continue;
             float k = tone * b.Tone;
             var p = _bodies[b.Parent];
-            Quaternion des = p.Rb.rotation * b.Rel0;
+            Quaternion des = p.Rb.rotation * (_groundSnapped ? b.RelGround : b.Rel0);
             // lying hurt, the standing knee bend fades out and the curl (around the body's own right axis) takes over
-            des = Extra(b.Role, kneel * (1f - hurt), right) * des;
-            if (hurt > 0f) des = Curl(b.Role, hurt * _curl * (1f - _sitW), bodyRight) * des;
+            // on the landed pose the knee bend is already in it, and the curl is half (it is added to how it already lies)
+            if (!_groundSnapped) des = Extra(b.Role, kneel * (1f - hurt), right) * des;
+            if (hurt > 0f) des = Curl(b.Role, hurt * _curl * (1f - _sitW) * (_groundSnapped ? 0.5f : 1f), bodyRight) * des;
             if (_sitW > 0f) des = SitPose(b.Role, _sitW, bodyRight) * des;
             if (_style == Style.Blast && !_landed) des = Curl(b.Role, 0.5f, bodyRight) * des;   // balled up in the air
             int arm = ArmOf(b.Role);
@@ -1161,7 +1194,7 @@ internal sealed class DeathMotion : MonoBehaviour
         Vector3 lean = Flat3(chest - pelvis);
         Vector3 dir = lean.magnitude > 0.12f ? lean.normalized : _stumbleDir;
         if (Vector3.Dot(dir, fwd) < 0.1f) return;   // nobody catches a fall backwards with straight arms
-        float w = _style == Style.Tumble
+        float w = _style == Style.Tumble || _style == Style.Airborne
             ? Smooth(0.05f, 0.25f, _t) * (1f - Smooth(_dur + 0.2f, _dur + 0.6f, _t))
             : Smooth(0.5f * _dur, 0.7f * _dur, _t) * (1f - Smooth(_dur + 0.15f, _dur + 0.5f, _t));
         if (w <= 0f) return;
