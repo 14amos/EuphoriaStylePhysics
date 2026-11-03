@@ -20,7 +20,7 @@ namespace EuphoriaStylePhysics;
 // Project Real Limbs (Project Zomboid) by deewindler, https://www.youtube.com/@DwindleDwindle (CC BY-NC 4.0); none of its
 // code is used here (its Java solver has no Unity counterpart).
 [BepInDependency("com.fika.core", BepInDependency.DependencyFlags.SoftDependency)]
-[BepInPlugin("amos.euphoriastylephysics", "Euphoria Style Physics", "0.17.5")]
+[BepInPlugin("amos.euphoriastylephysics", "Euphoria Style Physics", "0.17.6")]
 public sealed class Plugin : BaseUnityPlugin
 {
     internal static ManualLogSource Log;
@@ -56,7 +56,7 @@ public sealed class Plugin : BaseUnityPlugin
     internal static ConfigEntry<float> WallReach;
     internal static ConfigEntry<int> MaxDying;
     internal static ConfigEntry<float> MaxDistance;
-    internal static ConfigEntry<bool> CorpseHits;
+    internal static ConfigEntry<bool> CorpseHits, FloorClips;
     internal static ConfigEntry<bool> BurstKeepsUp;
     internal static ConfigEntry<float> LieWoundedChance;
     internal static ConfigEntry<bool> MeleeClutch;
@@ -220,6 +220,12 @@ public sealed class Plugin : BaseUnityPlugin
         CorpseHits = Config.Bind(d, "Rounds push dying bodies", true,
             "Our own push: a round into a body that is dying or still falling pushes the part it hits. Left to RealTargets when its "
             + "Impacts push corpses (so a body is not pushed twice). Either way a dying body gives way to the hit for a moment.");
+        // 0.17.6 (user: "lets try the floor clips"): MotionBricks clips made from EFT's own poses, lying wounded
+        FloorClips = Config.Bind(d, "Floor clips", true,
+            "A body lying wounded plays a floor clip for the way it landed instead of the curl: on its back it curls up, rolls, "
+            + "sits up holding the wound, reaches out, pleads, takes a last breath, or tries to push itself up; face down it crawls "
+            + "away; on its side it curls up or covers its head; a leg wound sits up holding the leg. Needs Lying wounded chance. "
+            + "The clips are files in plugins/EuphoriaStylePhysics/clips.");
         LieWoundedChance = Config.Bind(d, "Lying wounded chance", 0.4f,
             new ConfigDescription("Share of bodies that lie hurt for 2-5 s after the fall (curl up, a hand on the wound or reaching out) before going still. "
                 + "Not after headshots or blasts.",
@@ -289,6 +295,7 @@ public sealed class Plugin : BaseUnityPlugin
 
         CarryOverMovedSettings();
         LinkFeatureSwitches();
+        ClipLibrary.Load(System.IO.Path.GetDirectoryName(Info.Location));   // 0.17.6: MotionBricks floor clips
 
         try
         {
@@ -337,7 +344,7 @@ public sealed class Plugin : BaseUnityPlugin
             var obsMethod = observed == null ? null : AccessTools.DeclaredMethod(observed, nameof(Player.ShotReactions));
             if (obsMethod != null)
                 h.Patch(obsMethod, postfix: new HarmonyMethod(typeof(Plugin), nameof(ShotReactionsPostfix)));
-            Log.LogInfo($"[EuphoriaStylePhysics] 0.17.5 loaded; toggle key {ToggleKey.Value}; patches on: Corpse.TryToCreateRagdoll, sleep hierarchy, Physics.Simulate, BodyPartCollider.ApplyHit, Player.BodyUpdate/MovementUpdate, FirearmController.SetTriggerPressed, BotSteering.ManualFixedUpdate, ExplosionSharedMethods.Explosion, Player.ShotReactions, CorpseRagdoll.StopRigidbody, loot search log" +
+            Log.LogInfo($"[EuphoriaStylePhysics] 0.17.6 loaded; toggle key {ToggleKey.Value}; patches on: Corpse.TryToCreateRagdoll, sleep hierarchy, Physics.Simulate, BodyPartCollider.ApplyHit, Player.BodyUpdate/MovementUpdate, FirearmController.SetTriggerPressed, BotSteering.ManualFixedUpdate, ExplosionSharedMethods.Explosion, Player.ShotReactions, CorpseRagdoll.StopRigidbody, loot search log" +
                         $"{(obsMethod != null ? " + ObservedPlayer.ShotReactions" : "")}; Fika {(observed != null ? "present" : "absent")}");
         }
         catch (Exception e)
