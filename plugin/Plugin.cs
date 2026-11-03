@@ -72,7 +72,7 @@ public sealed class Plugin : BaseUnityPlugin
     internal static ConfigEntry<bool> KnockdownEnabled;
     internal static ConfigEntry<bool> BlastThrowWithRealTargets;
     internal static ConfigEntry<float> HoldUp;
-    internal static ConfigEntry<bool> CorpseWakeOn;
+    internal static ConfigEntry<bool> CorpseWakeOn, CorpseNeverFreeze;
     internal static ConfigEntry<float> CorpseWakeDistance;
     internal static ConfigEntry<int> CorpseWakeMax;
     internal static ConfigEntry<bool> SmoothCollisions, SearchThroughFloor;
@@ -190,6 +190,11 @@ public sealed class Plugin : BaseUnityPlugin
             new ConfigDescription("How close a corpse has to be to you to stay or become a ragdoll again.", new AcceptableValueRange<float>(2f, 50f)));
         CorpseWakeMax = Config.Bind(c, "Most physical corpses at once", 10,
             new ConfigDescription("Cap on corpses kept or made physical near you (performance).", new AcceptableValueRange<int>(1, 40)));
+        // 0.17.6 (user: "i dont want frozen ragdolls at all if possible")
+        CorpseNeverFreeze = Config.Bind(c, "Never freeze corpses", false,
+            "Every corpse stays a ragdoll for the whole raid, however far away (distance and cap above ignored). A settled body "
+            + "sleeps in the physics engine and costs little until something touches it; raids with very many bodies use more "
+            + "memory and physics time. Needs Corpses stay physical near you.");
         // 0.17.4 (user clip: rolling down stairs jitters, then the body cannot be searched from above)
         SmoothCollisions = Config.Bind(c, "Smooth body collisions", true,
             "Bodies use continuous (speculative) collisions, more solver steps and a soft push-out from geometry, so they roll down "

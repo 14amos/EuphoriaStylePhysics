@@ -74,6 +74,8 @@ internal static class CorpseWake
         {
             Player me = Singleton<GameWorld>.Instantiated ? Singleton<GameWorld>.Instance.MainPlayer : null;
             bool on = Plugin.IsOn && Plugin.CorpseWakeOn.Value && me != null;
+            // 0.17.6 (user: "i dont want frozen ragdolls at all if possible"): every corpse counts as near, so EFT never freezes one
+            bool always = on && Plugin.CorpseNeverFreeze.Value;
             float r = Plugin.CorpseWakeDistance.Value;
             Vector3 at = me != null ? me.Position : Vector3.zero;
             _awake = 0;
@@ -87,7 +89,7 @@ internal static class CorpseWake
                     continue;
                 }
                 var rag = e.Corpse.Ragdoll;
-                e.Near = on && (BodyPos(e) - at).sqrMagnitude < r * r;   // 0.17.5: where the body lies, not where it died
+                e.Near = always || on && (BodyPos(e) - at).sqrMagnitude < r * r;   // 0.17.5: where the body lies, not where it died
                 if (e.WokenByUs)
                 {
                     // EFT's first cycle removes the bodies once the corpse is out of sight, awake or not: build them again next time
@@ -97,7 +99,7 @@ internal static class CorpseWake
                     continue;
                 }
                 if (!rag._isPhysicsDone) { if (e.Near) _awake++; continue; }   // EFT's cycle still runs (kept going by the wrapper)
-                if (!e.Near || _awake >= Plugin.CorpseWakeMax.Value) continue;
+                if (!e.Near || !always && _awake >= Plugin.CorpseWakeMax.Value) continue;
                 if (AllRemoved(rag)) Rebuild(e);
                 else Wake(e);
                 _awake++;
