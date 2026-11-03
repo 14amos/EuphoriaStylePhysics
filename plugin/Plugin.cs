@@ -34,7 +34,7 @@ public sealed class Plugin : BaseUnityPlugin
     internal static ConfigEntry<int> PresetRevision;
     private static bool _patchFailed;
     internal static bool IsOn => Enabled.Value && !_patchFailed;   // the master switch, and patching worked this session
-    internal static ConfigEntry<float> Consistency;
+    internal static ConfigEntry<float> DyingVariety, KnockdownVariety;   // 0.17.6: one Variety per section, in place of Consistency
     internal static ConfigEntry<bool> RealTimePhysics;
 
     internal static ConfigEntry<bool> DeathEnabled;
@@ -120,9 +120,7 @@ public sealed class Plugin : BaseUnityPlugin
             + "Custom: nothing is set for you.");
         PresetApplied = Config.Bind(g, "Style preset applied", false, "Set by the mod once the preset's values have been written.");
         PresetRevision = Config.Bind(g, "Style preset revision", 0, "Set by the mod: which revision of the preset's values was written (a newer one is written once).");
-        Consistency = Config.Bind(g, "Consistency", 0.5f,
-            new ConfigDescription("How alike reactions are: 0 = every random range used fully, 1 = the same hit gives the same reaction.",
-                new AcceptableValueRange<float>(0f, 1f)));
+
         RealTimePhysics = Config.Bind(g, "Real-time ragdolls at low FPS", true,
             "EFT advances physics at most 0.03 s per frame, so below ~33 FPS every ragdoll falls in slow motion. While our bodies "
             + "move, one extra physics step per frame catches up with real time (costs a little CPU at low FPS).");
@@ -147,6 +145,15 @@ public sealed class Plugin : BaseUnityPlugin
         KnockdownEnabled = Config.Bind(k, "Knockdowns", false, new ConfigDescription(
             "MAIN SWITCH, EXPERIMENTAL (gameplay: the bot cannot shoot while down). A bot hit hard goes down on its own ragdoll and gets back up. "
             + "Only where the bots' AI runs. Details below.", null, new ConfigurationManagerAttributes { Order = 1000 }));
+        // 0.17.6 (user: "variety"): one Variety per section that has random ranges, right under its main switch (0 = alike, 1 = most varied)
+        DyingVariety = Config.Bind(d, "Variety", 0.5f,
+            new ConfigDescription("How different deaths are from each other. 0 = the same hit gives the same death (dying time in the middle of its range, "
+                + "hand to the wound and arms out nearly always), 1 = every random range used fully. Your chance settings (drop dead, lying wounded, "
+                + "twitches) are not changed by it.", new AcceptableValueRange<float>(0f, 1f), new ConfigurationManagerAttributes { Order = 990 }));
+        KnockdownVariety = Config.Bind(k, "Variety", 0.5f,
+            new ConfigDescription("How different knockdowns are: 0 = always the middle, 1 = the fall, the time on the ground and the bad-leg stay vary fully "
+                + "(between their min and max). Chances (go down, misfire, stay down) are not changed by it.", new AcceptableValueRange<float>(0f, 1f),
+                new ConfigurationManagerAttributes { Order = 990 }));
         DropDeadChance = Config.Bind(d, "Drop dead chance", 0.25f,
             new ConfigDescription("Share of the kills our dying would play that go limp on the spot instead (EFT's own ragdoll).", new AcceptableValueRange<float>(0f, 1f)));
         HeadshotLegsGoChance = Config.Bind(d, "Headshot: legs go at once", 0.25f,
@@ -367,7 +374,8 @@ public sealed class Plugin : BaseUnityPlugin
     // dying time and blast throw turned down (0.17.5: the stagger settings are gone). Written once over older revisions.
     private static void ApplyEuphoric(string why)
     {
-        Consistency.Value = 0.85f;
+        DyingVariety.Value = 0.15f;
+        KnockdownVariety.Value = 0.15f;
         // dying: a short consistent stagger, hand to the wound, knees give; headshots drop at once; writhing, little twitching
         DeathEnabled.Value = true;
         DropDeadChance.Value = 0.1f;
@@ -415,7 +423,7 @@ public sealed class Plugin : BaseUnityPlugin
         KnockdownHoldStill.Value = true;
         PresetApplied.Value = true;
         PresetRevision.Value = 4;
-        Log.LogInfo($"[EuphoriaStylePhysics] Euphoric preset applied ({why}, revision 4): consistency 0.85, dying 1.0-2.0 s, stumble 0.5, "
+        Log.LogInfo($"[EuphoriaStylePhysics] Euphoric preset applied ({why}, revision 4): variety 0.15, dying 1.0-2.0 s, stumble 0.5, "
                     + "headshots drop at once, blast throw 0.6; knockdowns OFF");
     }
 
@@ -475,15 +483,36 @@ public sealed class Plugin : BaseUnityPlugin
             var prop = typeof(ConfigFile).GetProperty("OrphanedEntries", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
             if (!(prop?.GetValue(Config) is System.Collections.Generic.Dictionary<ConfigDefinition, string> orphans) || orphans.Count == 0) return;
             int moved = 0;
+            // the one Consistency in 1. General became a Variety per section (variety = 1 - consistency): it goes to both
+            var oldConsistency = new ConfigDefinition("1. General", "Consistency");
+            if (orphans.TryGetValue(oldConsistency, out var cons))
+            {
+                float variety = float.TryParse(cons, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var cv) ? Mathf.Clamp01(1f - cv) : 0.5f;
+                DyingVariety.Value = variety;
+                KnockdownVariety.Value = variety;
+                orphans.Remove(oldConsistency);
+                moved += 2;
+            }
+            // the same name in a section of the same feature first ("6. Knockdowns" -> "4. Knockdowns"); a name bound in one place only
+            // otherwise (a name like "Variety" sits in two sections and is only carried to the same feature's)
+            static string Bare(string s) { int i = s.IndexOf(". ", StringComparison.Ordinal); return i >= 0 ? s.Substring(i + 2) : s; }
             foreach (var old in new System.Collections.Generic.List<ConfigDefinition>(orphans.Keys))
+            {
+                ConfigDefinition same = null, only = null;
+                int n = 0;
                 foreach (var def in Config.Keys)
-                    if (def.Key == old.Key && def.Section != old.Section)
-                    {
-                        Config[def].SetSerializedValue(orphans[old]);
-                        orphans.Remove(old);
-                        moved++;
-                        break;
-                    }
+                {
+                    if (def.Key != old.Key || def.Section == old.Section) continue;
+                    n++;
+                    only = def;
+                    if (Bare(def.Section) == Bare(old.Section)) same = def;
+                }
+                var to = same ?? (n == 1 ? only : null);
+                if (to == null) continue;
+                Config[to].SetSerializedValue(orphans[old]);
+                orphans.Remove(old);
+                moved++;
+            }
             int dropped = orphans.Count;
             orphans.Clear();
             if (moved > 0 || dropped > 0)

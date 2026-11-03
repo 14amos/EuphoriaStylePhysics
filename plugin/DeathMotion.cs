@@ -1607,13 +1607,15 @@ internal sealed class DeathMotion : MonoBehaviour
 
     private static float Smooth(float a, float b, float t) => b <= a ? (t >= b ? 1f : 0f) : Mathf.SmoothStep(0f, 1f, (t - a) / (b - a));
 
-    // 0.12.0 (user: "more consistent"): Consistency pulls every random range toward its middle
+    // 0.12.0 (user: "more consistent"): Consistency pulls every random range toward its middle. 0.17.6: one Variety per section
+    // (consistency = 1 - that section's Variety): a knockdown uses 4. Knockdowns', a death 2. Dying's
+    private float Cons => 1f - Mathf.Clamp01((_knock ? Plugin.KnockdownVariety : Plugin.DyingVariety).Value);
     private float Rand(float a, float b)
     {
-        float mid = 0.5f * (a + b), half = 0.5f * (b - a) * (1f - Mathf.Clamp01(Plugin.Consistency.Value));
+        float mid = 0.5f * (a + b), half = 0.5f * (b - a) * (1f - Cons);
         return mid + ((float)_rnd.NextDouble() * 2f - 1f) * half;
     }
 
-    // a chance pulled toward "always" by Consistency
-    private bool Often(float chance) => _rnd.NextDouble() < Mathf.Lerp(chance, 1f, Mathf.Clamp01(Plugin.Consistency.Value));
+    // a chance pulled toward "always" by low Variety
+    private bool Often(float chance) => _rnd.NextDouble() < Mathf.Lerp(chance, 1f, Cons);
 }

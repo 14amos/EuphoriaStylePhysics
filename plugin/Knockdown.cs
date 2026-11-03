@@ -89,6 +89,13 @@ internal static class Knockdown
     private static readonly List<(int a, int b)> _worldPairs = new List<(int, int)>();
 
     internal static bool IsFrozen(Player p) => p != null && States.TryGetValue(p, out var s) && s.Phase == Phase.Down;
+    // a time between min and max; 4. Knockdowns / Variety 0 = always the middle, 1 = anywhere (0.17.6)
+    private static float Spread(float min, float max)
+    {
+        float mid = 0.5f * (min + max), half = 0.5f * (max - min) * Mathf.Clamp01(Plugin.KnockdownVariety.Value);
+        return mid + ((float)_rnd.NextDouble() * 2f - 1f) * half;
+    }
+
     internal static bool IsActive(Player p) => p != null && States.ContainsKey(p);
     internal static int Count => States.Count;
     internal static string PhaseOf(Player p) => p != null && States.TryGetValue(p, out var s) ? s.Phase.ToString() : "-";
@@ -407,7 +414,7 @@ internal static class Knockdown
         else if (Plugin.StayDownEnabled.Value && Plugin.BadLegPose.Value == Plugin.LegPose.Sit && LegBad(p) && _rnd.NextDouble() < Plugin.StayDownChance.Value)
         {
             float min = Plugin.StayDownMin.Value, max = Mathf.Max(min, Plugin.StayDownMax.Value);
-            sitFor = min + (float)_rnd.NextDouble() * (max - min);
+            sitFor = Spread(min, max);
             s.Sits = true;
         }
         s.Motion = DeathMotion.BeginKnockdown(p, pool, info, part, ok => OnDown(p, ok), sitFor, remote, shooter);
@@ -585,7 +592,7 @@ internal static class Knockdown
                     RestoreSpeed(s, mc);
                     s.Phase = Phase.Downed;
                     float min = Plugin.StayDownMin.Value, max = Mathf.Max(min, Plugin.StayDownMax.Value);
-                    s.DownedUntil = Time.time + min + (float)_rnd.NextDouble() * (max - min);
+                    s.DownedUntil = Time.time + Spread(min, max);
                     Plugin.Log.LogInfo($"[EuphoriaStylePhysics] {p.Profile?.Nickname}: leg too hurt, stays down and fights for {s.DownedUntil - Time.time:F0} s");
                     break;
                 }
