@@ -127,6 +127,7 @@ internal static class Knockdown
         if (Impact.Count > 128) Impact.Clear();
         if (add < Plugin.KnockdownImpact.Value) return;
         Impact.Remove(player);
+        Prune(LastDown);
         LastDown[player] = now;   // a failed roll also waits for the cooldown, or every next round would roll again
         if (_rnd.NextDouble() >= Plugin.KnockdownChance.Value) return;
         // start next frame: the hit may still kill it this frame (then the corpse takes over)
@@ -142,6 +143,7 @@ internal static class Knockdown
         float now = Time.time;
         if (LastDown.TryGetValue(player, out float last) && now - last < Plugin.KnockdownCooldown.Value) return false;
         if (_rnd.NextDouble() >= Plugin.BlastKnockdownChance.Value) return false;
+        Prune(LastDown);
         LastDown[player] = now;
         Vector3 away = player.Position - at;
         away.y = 0f;
@@ -198,11 +200,54 @@ internal static class Knockdown
             {
                 States.Remove(p);
                 Resume(s);
+                if (s.Player == null) Abandon(s);   // despawned mid-knockdown: undo the world switch and the rest
                 if (p != null && s.Player != null) Plugin.Log.LogInfo($"[EuphoriaStylePhysics] {p.Profile?.Nickname} is back on its feet ({Time.time - s.DownAt:F1} s after going down, " +
                                                                       $"root moved {(s.UpRoot != Vector3.zero ? Vector3.Distance(s.UpRoot, p.Position) : 0f):F2} m while getting up)");
             }
-            else { if (States.TryGetValue(p, out var d)) Resume(d); States.Remove(p); }
+            else { if (States.TryGetValue(p, out var d)) { Resume(d); Abandon(d); } States.Remove(p); }
     }
+
+    // 0.17.5: a knockdown dropped without its normal end (the bot despawned, the raid ended, getting up threw) only resumed the AI:
+    // the global world-collision switch stayed on for the rest of the session, our physics registrations and the 3x transition
+    // speed stayed, and a held trigger kept firing. Everything it changed is undone here; a body that is a corpse now keeps the
+    // corpse's colliders (as OnDeath).
+    private static void Abandon(State s)
+    {
+        try
+        {
+            WorldOff(s);   // first: the global switch must come back even if a destroyed body throws below
+            if (s.Motion != null) s.Motion.Abort();
+            ReleaseTrigger(s);
+            Unsupport(s);
+            bool alive = s.Player != null && s.Player.HealthController != null && s.Player.HealthController.IsAlive;
+            if (alive)
+            {
+                RestoreSpeed(s, s.Player.MovementContext);
+                Restore(s);
+            }
+        }
+        catch (Exception e) { Plugin.Log.LogWarning($"[EuphoriaStylePhysics] knockdown clean-up after a drop failed: {e.Message}"); }
+    }
+
+    // the sitting gun's trigger, if it holds it (0.17.5: a motion ending early left it held; the paused brain never lets go)
+    private static void ReleaseTrigger(State s)
+    {
+        if (!s.TriggerHeld) return;
+        s.TriggerHeld = false;
+        try { (s.Player?.HandsController as Player.FirearmController)?.SetTriggerPressed(false); }
+        catch (Exception e) { Plugin.Log.LogWarning($"[EuphoriaStylePhysics] trigger release failed: {e.Message}"); }
+    }
+
+    // drops entries for bots that no longer exist, once the map grows (0.17.5: per-bot maps kept dead bots' whole profiles alive
+    // for the session)
+    internal static void Prune<T>(Dictionary<Player, T> map)
+    {
+        if (map.Count < 64) return;
+        PruneKeys.Clear();
+        foreach (var k in map.Keys) if (k == null || k.HealthController == null || !k.HealthController.IsAlive) PruneKeys.Add(k);
+        foreach (var k in PruneKeys) map.Remove(k);
+    }
+    private static readonly List<Player> PruneKeys = new List<Player>();
 
     private static void Resume(State s)
     {
@@ -387,6 +432,7 @@ internal static class Knockdown
     {
         if (p == null || !States.TryGetValue(p, out var s) || s.Phase != Phase.Down) return;
         if (p.HealthController == null || !p.HealthController.IsAlive) return;   // OnDeath handles it
+        ReleaseTrigger(s);
         try { GetUp(s); }
         catch (Exception e) { Fail(p, e); }
     }

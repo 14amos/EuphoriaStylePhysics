@@ -527,7 +527,59 @@ internal sealed class DeathMotion : MonoBehaviour
                            $"arms out {(_braces ? "yes" : "no")}, shooter {(_hasShooter ? "known" : "-")}, lies hurt {(_lieHurt ? $"{_hurtTo - _hurtFrom:F1} s" : "no")}, twitches {(_throesTo > 0 ? "yes" : "no")}, {_bodies.Count} bodies, {spines} spine, " +
                            $"{_mass:F0} kg, arms {(_arms[0].Ok ? "L" : "")}{(_arms[1].Ok ? "R" : "")}, physics {PhysicsMode()}");
         if (Plugin.VerboseLog.Value) Plugin.Log.LogInfo($"[EuphoriaStylePhysics] bodies: {roles}");
+        if (!_knock) SeparateOverlaps(player);   // Knockdown does its own (it keeps them apart for the whole knockdown)
         return true;
+    }
+
+    // 0.17.5 (bodies vibrating): a body's own hit colliders and armour plates overlap where they meet, and the solver pushed them
+    // apart every step while the muscles held the pose: a constant buzz. Only shapes that overlap by design stop colliding: trunk,
+    // hip and shoulder parts (pelvis, spine, neck, head, thighs, upper arms) at most two links apart, never thigh-thigh or arm-arm.
+    // Forearms, hands, calves and feet keep colliding with everything, so a hand on the wound rests on the body, not in it.
+    private void SeparateOverlaps(Player player)
+    {
+        try
+        {
+            var index = new Dictionary<Rigidbody, int>();
+            for (int i = 0; i < _bodies.Count; i++) index[_bodies[i].Rb] = i;
+            var cols = new List<Collider>();
+            foreach (var c in player.GetComponentsInChildren<Collider>())
+                if (c != null && c.enabled && !c.isTrigger && c.attachedRigidbody != null && index.ContainsKey(c.attachedRigidbody)) cols.Add(c);
+            int pairs = 0;
+            for (int i = 0; i < cols.Count; i++)
+                for (int j = i + 1; j < cols.Count; j++)
+                {
+                    var a = cols[i];
+                    var c = cols[j];
+                    if (a.attachedRigidbody == c.attachedRigidbody) continue;
+                    if (!OverlapByDesign(index[a.attachedRigidbody], index[c.attachedRigidbody])) continue;
+                    if (!Physics.ComputePenetration(a, a.transform.position, a.transform.rotation, c, c.transform.position, c.transform.rotation, out _, out float depth)) continue;
+                    if (depth <= 0.002f) continue;
+                    Physics.IgnoreCollision(a, c, true);
+                    pairs++;
+                }
+            if (Plugin.VerboseLog.Value) Plugin.Log.LogInfo($"[EuphoriaStylePhysics] {_name}: {pairs} own overlapping collider pairs kept apart");
+        }
+        catch (Exception e) { Plugin.Log.LogWarning($"[EuphoriaStylePhysics] {_name}: own colliders not separated: {e.Message}"); }
+    }
+
+    private bool OverlapByDesign(int i, int j)
+    {
+        static bool Core(Role r) => r is Role.Pelvis or Role.Spine or Role.Neck or Role.Head or Role.ThighL or Role.ThighR or Role.UpperL or Role.UpperR;
+        Role a = _bodies[i].Role, b = _bodies[j].Role;
+        if (!Core(a) || !Core(b)) return false;
+        if (a is Role.ThighL or Role.ThighR && b is Role.ThighL or Role.ThighR) return false;
+        if (a is Role.UpperL or Role.UpperR && b is Role.UpperL or Role.UpperR) return false;
+        return Links(i, j) <= 2;
+    }
+
+    // how many joints apart two bodies are (through their common ancestor)
+    private int Links(int i, int j)
+    {
+        var up = new Dictionary<int, int>();
+        for (int k = i, d = 0; k >= 0 && d < 16; k = _bodies[k].Parent, d++) up[k] = d;
+        for (int k = j, d = 0; k >= 0 && d < 16; k = _bodies[k].Parent, d++)
+            if (up.TryGetValue(k, out int di)) return di + d;
+        return 99;
     }
 
     private bool Skip(string why)
@@ -586,6 +638,7 @@ internal sealed class DeathMotion : MonoBehaviour
         if (add <= 0f) return;
         _dur += add;
         _durAdded += add;
+        ShiftAfterFeet(add);
         if (_legsGoAt > 0f && _style == Style.HeadRipple) _legsGoAt += add;
     }
 
@@ -792,8 +845,11 @@ internal sealed class DeathMotion : MonoBehaviour
             float wn = Mathf.Min(b.Wn * Mathf.Sqrt(k), wnMax);
             Vector3 err = RotErr(des, b.Rb.rotation);
             Vector3 wRel = b.Rb.angularVelocity - p.Rb.angularVelocity;
-            Vector3 alpha = Vector3.ClampMagnitude(wn * wn * err - 2f * wn * wRel, 400f);
             float inertia = Inertia(b.Rb);
+            // 0.17.5 (bodies vibrating): the torque turns the parent back as well, so the damping per step is 2 wn dt (1 + I_child /
+            // I_parent); held under 0.8 so a limb on a light parent (a calf on a thigh, the head) cannot flip its spin every step.
+            float wd = Mathf.Min(wn, 0.4f / (dt * (1f + inertia / Mathf.Max(Inertia(p.Rb), 1e-5f))));
+            Vector3 alpha = Vector3.ClampMagnitude(wn * wn * err - 2f * wd * wRel, 400f);
             Vector3 tau;
             if (arm >= 0 && _arms[arm].Goal != Goal.None && _arms[arm].W > 0f)
             {
@@ -802,11 +858,14 @@ internal sealed class DeathMotion : MonoBehaviour
                 Subtree(i, out float m, out Vector3 com);
                 Vector3 r = com - b.Rb.position;
                 inertia += m * r.sqrMagnitude;
-                Vector3 gravityHold = -Vector3.Cross(r, Physics.gravity * m) * _arms[arm].W;
-                // damping capped by the body's own inertia per step, or a light upper arm would overshoot and jitter
+                // 0.17.5 (forearms reversing their spin up to 19.6 times a second): the torque lands on this one body, so what one
+                // physics step can take is set by ITS inertia. Damping was allowed up to 3x that per step, which flips the spin every
+                // step instead of braking it; now held under 0.8x, the stiffness under 0.3x. The arm's weight is held by PullHands
+                // only (holding it here too lifted it twice).
                 float own = Inertia(b.Rb);
-                float damp = Mathf.Min(2f * wn * inertia, 3f * own / dt);
-                tau = Vector3.ClampMagnitude(wn * wn * inertia * err - damp * wRel + gravityHold, 60f);
+                float damp = Mathf.Min(2f * wn * inertia, 0.8f * own / dt);
+                float stiff = Mathf.Min(wn * wn * inertia, 0.3f * own / (dt * dt));
+                tau = Vector3.ClampMagnitude(stiff * err - damp * wRel, 60f);
             }
             else tau = alpha * inertia;
             b.Rb.AddTorque(tau);
@@ -861,10 +920,12 @@ internal sealed class DeathMotion : MonoBehaviour
 
             if (Plugin.Stepping.Value && _style != Style.Tumble) CatchStep(dt, pelvis, vH, right, support);
         }
+        // 0.17.5: CatchStep only runs while the hand holds; a step it began and could not finish stayed half done
+        else if (_stepLeg >= 0) _stepLeg = -1;
 
         if (_sitW > 0.001f) HoldSitting(pelvis, wnMax);
         if (_knock && !_remote && _sitW < 0.1f && Plugin.KnockdownRollOver.Value) RollOver(wnMax);
-        PullHands();
+        PullHands(dt);
         if (_throesTo > 0f && _t >= _throesFrom && _t < _throesTo) Twitch();
         if (_knock && hurt > 0.3f && _sitW < 0.1f && _roll != 1 && Plugin.KnockdownWrithe.Value) Writhe(bodyRight);
         return true;
@@ -1057,7 +1118,7 @@ internal sealed class DeathMotion : MonoBehaviour
     // 0.6.4 (user: no hands seen on wounds/walls; log: hands 50-90 cm off): turning the joints toward an IK pose did not
     // get the hands there, so each reaching hand is also pulled straight at its target by a spring at the palm (the elbow and
     // shoulder follow through the joints), holding the arm's weight; the chest takes the opposite pull, so it stays internal.
-    private void PullHands()
+    private void PullHands(float dt)
     {
         var chest = _bodies[_chest].Rb;
         foreach (var a in _arms)
@@ -1068,9 +1129,13 @@ internal sealed class DeathMotion : MonoBehaviour
             Vector3 e = fore.position;
             Vector3 h = a.Palm != null ? a.Palm.position : e + (e - up.position).normalized * a.ForeLen;
             Subtree(a.Up, out float m, out _);
-            Vector3 v = fore.GetPointVelocity(h);
+            // 0.17.5: braked against the chest, not the ground: a hand moving with the falling body is not held back (it buzzed)
+            Vector3 v = fore.GetPointVelocity(h) - chest.GetPointVelocity(up.position);
             float kp = a.Goal == Goal.Ground ? 90f : 150f;
-            Vector3 f = m * (kp * (a.Target - h) - 2f * Mathf.Sqrt(kp) * v - Physics.gravity);
+            // the force lands on the forearm alone: its braking held under 0.6x what the forearm's mass takes in one step (it was
+            // ~0.9x, enough to flip the hand back and forth with the joint torque on top)
+            float c = Mathf.Min(m * 2f * Mathf.Sqrt(kp), 0.6f * fore.mass / dt);
+            Vector3 f = m * kp * (a.Target - h) - c * v - m * Physics.gravity;
             f = Vector3.ClampMagnitude(f, m * 40f) * a.W * Plugin.MuscleScale.Value;
             fore.AddForceAtPosition(f, h);
             chest.AddForceAtPosition(-f, up.position);
@@ -1093,18 +1158,28 @@ internal sealed class DeathMotion : MonoBehaviour
         _landed = true;
         float off = _t - _dur;
         _dur = _t;
-        _hurtFrom += off;
-        _hurtTo += off;
-        if (_throesTo > 0f) { _throesFrom += off; _throesTo += off; }
+        ShiftAfterFeet(off);
         Plugin.Log.LogInfo($"[EuphoriaStylePhysics] {_name}: landed after {_t:F2} s in the air");
     }
 
+    // 0.17.5: what comes after its time on its feet (lying hurt, twitches) moves with the end of that time. A round keeping it up
+    // moved nothing, so lying hurt began while it still stood (and took the standing pose as the pose it lies in).
+    private void ShiftAfterFeet(float off)
+    {
+        _hurtFrom += off;
+        _hurtTo += off;
+        if (_throesTo > 0f) { _throesFrom += off; _throesTo += off; }
+    }
+
     // Mass and centre of mass of a body and everything hanging off it.
+    private static readonly Stack<int> SubtreeStack = new Stack<int>();
+
     private void Subtree(int i, out float mass, out Vector3 com)
     {
         mass = 0f;
         Vector3 sum = Vector3.zero;
-        var stack = new Stack<int>();
+        var stack = SubtreeStack;   // 0.17.5: was a new Stack per call, several per body per physics step
+        stack.Clear();
         stack.Push(i);
         for (int guard = 0; stack.Count > 0 && guard < 64; guard++)
         {
@@ -1342,20 +1417,24 @@ internal sealed class DeathMotion : MonoBehaviour
         if (thigh >= 0) _bodies[thigh].Rb.AddTorque(bodyRight * -Rand(1f, 2f), ForceMode.VelocityChange);
     }
 
+    private static readonly List<Body> TwitchCandidates = new List<Body>();
+
     private void Twitch()
     {
         if (_t < _throesNext) return;
-        _throesNext = _t + Rand(0.12f, 0.4f);
+        // 0.17.5 (bodies vibrating): a kick every 0.12-0.4 s at 4 rad/s on hands and feet read as a buzz, not a spasm. Now one every
+        // 0.35-0.9 s, half as hard, on forearms, calves and the head only (hands and feet are too light).
+        _throesNext = _t + Rand(0.35f, 0.9f);
         float fade = 1f - Smooth(_throesFrom, _throesTo, _t);
-        var candidates = new List<Body>();
+        var candidates = TwitchCandidates;
+        candidates.Clear();
         foreach (var b in _bodies)
-            if ((b.Role is Role.ForeL or Role.ForeR or Role.CalfL or Role.CalfR or Role.HandL or Role.HandR or Role.FootL or Role.FootR or Role.Head) &&
-                !Shrunk(b.Rb.transform))
+            if ((b.Role is Role.ForeL or Role.ForeR or Role.CalfL or Role.CalfR or Role.Head) && !Shrunk(b.Rb.transform))
                 candidates.Add(b);
         if (candidates.Count == 0) return;
         var pick = candidates[_rnd.Next(candidates.Count)];
         Vector3 axis = new Vector3(Rand(-1f, 1f), Rand(-1f, 1f), Rand(-1f, 1f)).normalized;
-        pick.Rb.AddTorque(axis * (4f * _throesPower * fade), ForceMode.VelocityChange);
+        pick.Rb.AddTorque(axis * (2f * _throesPower * fade), ForceMode.VelocityChange);
     }
 
     // massShare: the mass this body keeps upright above it (pelvis ~ half the body, chest ~ the upper third), at ~0.3 m.

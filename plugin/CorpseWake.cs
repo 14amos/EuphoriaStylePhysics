@@ -22,6 +22,7 @@ internal static class CorpseWake
         public string Name;
         public bool WokenByUs;     // our dynamic bodies on a frozen corpse (we freeze them again)
         public bool Near;
+        public Rigidbody Pelvis;   // 0.17.5: the body can lie metres from the corpse root
     }
 
     private static readonly List<Entry> Corpses = new List<Entry>();
@@ -40,6 +41,30 @@ internal static class CorpseWake
         if (orig != null)
             corpse.Ragdoll._checkCorpseIsStill = (sleeping, t) => orig(sleeping, t) && !(Plugin.Enabled.Value && Plugin.CorpseWakeOn.Value && e.Near);
     }
+
+    private static Vector3 BodyPos(Entry e)
+    {
+        if (e.Pelvis == null && e.Corpse.Ragdoll?._rigidbodySpawners != null)
+            foreach (var sp in e.Corpse.Ragdoll._rigidbodySpawners)
+                if (sp != null && sp.Rigidbody != null && sp.Rigidbody.name.IndexOf("pelvis", System.StringComparison.OrdinalIgnoreCase) >= 0) { e.Pelvis = sp.Rigidbody; break; }
+        return e.Pelvis != null ? e.Pelvis.position : e.Corpse.transform.position;
+    }
+
+    // 0.17.5 (corpses moved, then froze): EFT's cycle puts each part to sleep once slow and marks it MustBeSleeping, then sleeps
+    // it again every frame, so a corpse kept physical went stiff right after it settled. Not for corpses we keep live.
+    internal static bool KeepsLive(Rigidbody rb)
+    {
+        if (rb == null || Corpses.Count == 0) return false;
+        // EFT asks every corpse body to sleep every frame; a GetComponentInParent per ask added up. Looked up once.
+        if (!CorpseOf.TryGetValue(rb, out var c) || c == null)
+        {
+            if (CorpseOf.Count > 4096) CorpseOf.Clear();
+            c = rb.GetComponentInParent<Corpse>();
+            CorpseOf[rb] = c;
+        }
+        return c != null && ByCorpse.TryGetValue(c, out var e) && e.Near && Plugin.Enabled.Value && Plugin.CorpseWakeOn.Value;
+    }
+    private static readonly Dictionary<Rigidbody, Corpse> CorpseOf = new Dictionary<Rigidbody, Corpse>();
 
     internal static void Tick()
     {
@@ -62,7 +87,7 @@ internal static class CorpseWake
                     continue;
                 }
                 var rag = e.Corpse.Ragdoll;
-                e.Near = on && (e.Corpse.transform.position - at).sqrMagnitude < r * r;
+                e.Near = on && (BodyPos(e) - at).sqrMagnitude < r * r;   // 0.17.5: where the body lies, not where it died
                 if (e.WokenByUs)
                 {
                     // EFT's first cycle removes the bodies once the corpse is out of sight, awake or not: build them again next time
@@ -91,14 +116,14 @@ internal static class CorpseWake
     // keep it on the surface. EFT sets Discrete again when it freezes the corpse.
     internal static void SmoothCollisions(CorpseRagdoll rag)
     {
-        if (rag == null || !Plugin.SmoothCollisions.Value) return;
+        if (rag == null || !Plugin.SmoothCollisions.Value || !Plugin.Enabled.Value) return;   // 0.17.5: master switch too
         foreach (var s in rag._rigidbodySpawners)
             if (s != null && s.Rigidbody != null && !s.Rigidbody.isKinematic) Smooth(s.Rigidbody);
     }
 
     private static void Smooth(Rigidbody rb)
     {
-        if (!Plugin.SmoothCollisions.Value) return;
+        if (!Plugin.SmoothCollisions.Value || !Plugin.Enabled.Value) return;
         rb.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
         rb.solverIterations = Mathf.Max(rb.solverIterations, 12);
         rb.solverVelocityIterations = Mathf.Max(rb.solverVelocityIterations, 4);
@@ -156,6 +181,7 @@ internal static class CorpseWake
             rb.angularVelocity = Vector3.zero;
             PhysicsExtensions.UpdateController.SupportRigidbody(rb, 0f);
         }
+        Hush(rag);
         e.WokenByUs = true;
         _wakes++;
         if (Plugin.VerboseLog.Value || _wakes <= 5)
@@ -186,6 +212,21 @@ internal static class CorpseWake
         if (Plugin.VerboseLog.Value) Plugin.Log.LogInfo($"[EuphoriaStylePhysics] corpse of {e.Name} frozen again (you left)");
     }
 
+    // 0.17.5, GitHub #1 ("Bodies Move After Dead"): the frozen pose is not quite a physics rest pose (joints a little off, parts
+    // a little in the ground), so a body made physical again settled with a twitch when you walked up to it. It comes back asleep
+    // instead: it lies still until a round, a blast or another body touches it, which wakes it as usual.
+    private static void Hush(CorpseRagdoll rag)
+    {
+        foreach (var s in rag._rigidbodySpawners)
+        {
+            var rb = s != null ? s.Rigidbody : null;
+            if (rb == null || rb.isKinematic) continue;
+            rb.velocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+            rb.Sleep();
+        }
+    }
+
     // EFT already removed its bodies: build them again, no start velocity (EFT would give it the death velocity again)
     private static void Rebuild(Entry e)
     {
@@ -193,6 +234,7 @@ internal static class CorpseWake
         rag._velocity = Vector3.zero;
         rag.Start();
         SmoothCollisions(rag);
+        Hush(rag);
         _rebuilds++;
         if (Plugin.VerboseLog.Value || _rebuilds <= 5)
             Plugin.Log.LogInfo($"[EuphoriaStylePhysics] corpse of {e.Name} rebuilt as a ragdoll (you are near; {_rebuilds} so far)");

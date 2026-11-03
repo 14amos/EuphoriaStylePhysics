@@ -339,13 +339,17 @@ public sealed class Plugin : BaseUnityPlugin
                 prefix: new HarmonyMethod(typeof(Plugin), nameof(LootScreenPrefix)));
             h.Patch(AccessTools.Method(typeof(Player), nameof(Player.ShotReactions)),
                 postfix: new HarmonyMethod(typeof(Plugin), nameof(ShotReactionsPostfix)));
+            // 0.17.5 (a bot killed while healing vanished): null body parts at corpse settle (on CorpseRagdoll, so Fika's observed
+            // corpses too)
+            h.Patch(AccessTools.Method(typeof(CorpseRagdoll), nameof(CorpseRagdoll.StopRigidbody)),
+                prefix: new HarmonyMethod(typeof(Plugin), nameof(StopRigidbodyPrefix)));
             // Fika's ObservedPlayer (bots and players on a client) may override ShotReactions without calling it; patch the
             // override too when it exists (a patch on the base method does not cover an override).
             var observed = AccessTools.TypeByName("Fika.Core.Main.Players.ObservedPlayer");
             var obsMethod = observed == null ? null : AccessTools.DeclaredMethod(observed, nameof(Player.ShotReactions));
             if (obsMethod != null)
                 h.Patch(obsMethod, postfix: new HarmonyMethod(typeof(Plugin), nameof(ShotReactionsPostfix)));
-            Log.LogInfo($"[EuphoriaStylePhysics] 0.17.4 loaded; toggle key {ToggleKey.Value}; patches on: Corpse.TryToCreateRagdoll, sleep hierarchy, Physics.Simulate, BodyPartCollider.ApplyHit, MovementContext.AnimatorStatesLateUpdate, BotAISteeringImpostorCharacterController.Move, Player.BodyUpdate/MovementUpdate, FirearmController.SetTriggerPressed, BotSteering.ManualFixedUpdate, ExplosionSharedMethods.Explosion, Player.ShotReactions, loot search log" +
+            Log.LogInfo($"[EuphoriaStylePhysics] 0.17.5 loaded; toggle key {ToggleKey.Value}; patches on: Corpse.TryToCreateRagdoll, sleep hierarchy, Physics.Simulate, BodyPartCollider.ApplyHit, MovementContext.AnimatorStatesLateUpdate, BotAISteeringImpostorCharacterController.Move, Player.BodyUpdate/MovementUpdate, FirearmController.SetTriggerPressed, BotSteering.ManualFixedUpdate, ExplosionSharedMethods.Explosion, Player.ShotReactions, CorpseRagdoll.StopRigidbody, loot search log" +
                         $"{(obsMethod != null ? " + ObservedPlayer.ShotReactions" : "")}; Fika {(observed != null ? "present" : "absent")}");
         }
         catch (Exception e)
@@ -463,17 +467,30 @@ public sealed class Plugin : BaseUnityPlugin
         }
     }
 
+    // 0.17.5 (opening inventories spiked the frame time to ~6 ms): the search log looked the body up with FindObjectsOfType<Corpse>
+    // (a scan of the whole scene) on every loot interaction. Corpses are remembered as they are made.
+    private static readonly System.Collections.Generic.List<Corpse> KnownCorpses = new System.Collections.Generic.List<Corpse>();
+
     private static void RagdollCreatedPostfix(Corpse __instance, bool forceStill)
     {
+        if (__instance != null)
+        {
+            KnownCorpses.RemoveAll(c => c == null);
+            KnownCorpses.Add(__instance);
+        }
         if (__instance != null && __instance.Ragdoll != null)
             try { CorpseWake.Track(__instance, __instance.GetComponent<Player>()?.Profile?.Nickname ?? __instance.name); }
             catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] corpse not tracked for waking: {e.Message}"); }
+        // 0.17.5: this ran after the gate below, so with "Dying with muscles" off, the mod toggled off or a still corpse (forceStill)
+        // a bot that died knocked down kept its knockdown state: world collisions on, extra physics steps every frame, its gun
+        // dragged to its palm, agony lines from the corpse
+        try { var dead = __instance != null ? __instance.GetComponent<Player>() : null; if (dead != null) Knockdown.OnDeath(dead); }
+        catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] knockdown not ended at death: {e.Message}"); }
         if (!Enabled.Value || !DeathEnabled.Value || forceStill || __instance == null || __instance.Ragdoll == null) return;
         try
         {
             var player = __instance.GetComponent<Player>();
             if (player == null) return;   // map corpses and late-join corpses have no living body to die from
-            Knockdown.OnDeath(player);    // died while knocked down: the corpse takes the ragdoll over as it lies
             DeathMotion.Begin(__instance, player);
         }
         catch (Exception e)
@@ -559,6 +576,39 @@ public sealed class Plugin : BaseUnityPlugin
         catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] blast position not recorded: {e.Message}"); }
     }
 
+    private static string CorpseName(CorpseRagdoll rag)
+    {
+        var body = rag?._playerBody;
+        if (body == null) return "?";
+        var p = body.GetComponentInParent<Player>();
+        return p?.Profile?.Nickname ?? body.transform.root.name;
+    }
+
+    // 0.17.5: EFT's StopRigidbody uses the body without a null check (CorpseRagdoll.StopRigidbody / its settle loop), and the corpse
+    // vanished. When another mod (HollywoodFX's ragdoll section) has its own prefix there, the null body is left to it.
+    private static int _otherNullFix = -1;
+    private static bool StopRigidbodyPrefix(CorpseRagdoll __instance, Rigidbody rigidbody)
+    {
+        if (rigidbody != null) return true;
+        try
+        {
+            if (_otherNullFix < 0)
+            {
+                var info = Harmony.GetPatchInfo(AccessTools.Method(typeof(CorpseRagdoll), nameof(CorpseRagdoll.StopRigidbody)));
+                Patch other = null;
+                if (info != null) foreach (var p in info.Prefixes) if (p.owner != "amos.euphoriastylephysics") { other = p; break; }
+                _otherNullFix = other != null ? 1 : 0;
+                Log.LogInfo(other != null
+                    ? $"[EuphoriaStylePhysics] vanishing corpse fix left to {other.owner} ({other.PatchMethod.DeclaringType?.FullName})"
+                    : "[EuphoriaStylePhysics] vanishing corpse fix: ours (no other mod fixes it)");
+            }
+            if (_otherNullFix == 1) return true;
+            Log.LogInfo($"[EuphoriaStylePhysics] corpse of {CorpseName(__instance)}: body part with no physics body skipped at settle (vanishing corpse fix)");
+        }
+        catch { }
+        return false;
+    }
+
     // 0.16.2: which body, how far from the player its root and its ragdoll are, and whether EFT's battle screen lets it open
     private static void LootInteractPrefix(Player __instance, IItemOwner loot)
     {
@@ -566,14 +616,14 @@ public sealed class Plugin : BaseUnityPlugin
         {
             if (__instance == null || __instance.IsAI) return;
             Corpse corpse = null;
-            foreach (var c in UnityEngine.Object.FindObjectsOfType<Corpse>())
+            foreach (var c in KnownCorpses)
                 if (c != null && ReferenceEquals(c.ItemOwner, loot)) { corpse = c; break; }
             if (corpse == null)
             {
                 Log.LogInfo($"[EuphoriaStylePhysics] search pressed: {loot?.RootItem?.ShortName} (not a body)");
                 return;
             }
-            var pelvis = AccessTools.Field(typeof(Corpse), "_pelvis")?.GetValue(corpse) as Transform;
+            var pelvis = CorpsePelvis?.GetValue(corpse) as Transform;
             Vector3 me = __instance.Position;
             Log.LogInfo($"[EuphoriaStylePhysics] search pressed: body {corpse.name}, root {Vector3.Distance(me, corpse.transform.position):F2} m away, " +
                         $"ragdoll pelvis {(pelvis != null ? Vector3.Distance(me, pelvis.position).ToString("F2") : "?")} m away, " +
@@ -582,18 +632,31 @@ public sealed class Plugin : BaseUnityPlugin
         catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] search log failed: {e.Message}"); }
     }
 
-    // EFT's screen types live behind Sirenix (not referenced here): reached by reflection
+    private static readonly System.Reflection.FieldInfo CorpsePelvis = AccessTools.Field(typeof(Corpse), "_pelvis");
+    // EFT's screen types live behind Sirenix (not referenced here): reached by reflection. 0.17.5: looked up once (TypeByName scans
+    // every loaded assembly; it ran on every loot screen and was most of the inventory spike), not on each opening.
+    private static bool _screenLookedUp;
+    private static System.Reflection.PropertyInfo _screenInstance;
+    private static System.Reflection.MethodInfo _screenCheck;
+    private static object[] _battleUiArg;
+
     private static void LootScreenPrefix(CompoundItem loot)
     {
         try
         {
+            if (!_screenLookedUp)
+            {
+                _screenLookedUp = true;
+                var mgr = AccessTools.TypeByName("EFT.UI.Screens.EftScreenManager");
+                var kind = AccessTools.TypeByName("EFT.UI.Screens.EEftScreenType");
+                _screenInstance = mgr == null ? null : AccessTools.Property(mgr, "Instance");
+                _screenCheck = mgr == null ? null : AccessTools.Method(mgr, "CheckCurrentScreen");
+                if (kind != null) _battleUiArg = new[] { Enum.Parse(kind, "BattleUI") };
+            }
             string battle = "?";
-            var mgr = AccessTools.TypeByName("EFT.UI.Screens.EftScreenManager");
-            var kind = AccessTools.TypeByName("EFT.UI.Screens.EEftScreenType");
-            var inst = mgr == null ? null : AccessTools.Property(mgr, "Instance")?.GetValue(null);
-            var check = mgr == null ? null : AccessTools.Method(mgr, "CheckCurrentScreen");
-            if (inst != null && check != null && kind != null)
-                battle = check.Invoke(inst, new[] { Enum.Parse(kind, "BattleUI") }).ToString();
+            var inst = _screenInstance?.GetValue(null);
+            if (inst != null && _screenCheck != null && _battleUiArg != null)
+                battle = _screenCheck.Invoke(inst, _battleUiArg).ToString();
             Log.LogInfo($"[EuphoriaStylePhysics] search: opening the loot screen for {loot?.ShortName} (battle screen current: {battle})");
         }
         catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] search screen log failed: {e.Message}"); }
@@ -648,6 +711,12 @@ public sealed class Plugin : BaseUnityPlugin
         var rb = __instance?.RigidbodySpawner != null ? __instance.RigidbodySpawner.Rigidbody : null;
         if (rb != null && DeathMotion.IsDriven(rb))
         {
+            __result = false;
+            return false;
+        }
+        if (rb != null && CorpseWake.KeepsLive(rb))   // 0.17.5: a corpse kept physical is not force-slept every frame
+        {
+            __instance.MustBeSleeping = false;
             __result = false;
             return false;
         }
