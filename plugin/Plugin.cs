@@ -116,7 +116,7 @@ public sealed class Plugin : BaseUnityPlugin
         VerboseLog = Config.Bind(g, "Verbose log", false, "More detail in the BepInEx log for every part of the mod: each flinch, corpse, knockdown and skipped death (deaths are always logged).");
         Preset = Config.Bind(g, "Style preset", StylePreset.Euphoric,
             "Euphoric: sets every value below for Euphoria-style bodies (consistent stagger, hand to the wound, knees give, "
-            + "headshots drop at once, survivors flinch and keep fighting). The experimental gameplay part (knockdowns) stays off; "
+            + "every death on our physics, none left to EFT's own ragdoll, survivors flinch and keep fighting). The experimental gameplay part (knockdowns) stays off; "
             + "turn it on yourself. Applied once when picked; change anything afterwards as you like. "
             + "Custom: nothing is set for you.");
         PresetApplied = Config.Bind(g, "Style preset applied", false, "Set by the mod once the preset's values have been written.");
@@ -398,8 +398,9 @@ public sealed class Plugin : BaseUnityPlugin
         KnockdownVariety.Value = 0.15f;
         // dying: a short consistent stagger, hand to the wound, knees give; headshots drop at once; writhing, little twitching
         DeathEnabled.Value = true;
-        DropDeadChance.Value = 0.1f;
-        HeadshotInstantDrop.Value = true;
+        // 0.21.0 (user: "make it by default turn eft ragdoll settings off"): no kill is handed to EFT's own ragdoll
+        DropDeadChance.Value = 0f;
+        HeadshotInstantDrop.Value = false;
         DyingTimeMin.Value = 1.0f;
         DyingTimeMax.Value = 2.0f;
         StumbleScale.Value = 0.5f;
@@ -444,7 +445,7 @@ public sealed class Plugin : BaseUnityPlugin
         PresetApplied.Value = true;
         PresetRevision.Value = 4;
         Log.LogInfo($"[EuphoriaStylePhysics] Euphoric preset applied ({why}, revision 4): variety 0.15, dying 1.0-2.0 s, stumble 0.5, "
-                    + "headshots drop at once, blast throw 0.6; knockdowns OFF");
+                    + "no EFT ragdoll (drop dead 0, headshots not instant, explosions ours), blast throw 0.6; knockdowns OFF");
     }
 
     private void Update()

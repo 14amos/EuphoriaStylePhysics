@@ -41,6 +41,7 @@ On by default (visual, how bodies look):
 - **Explosion flinch:** survivors recoil away from a blast.
 - **Corpses stay physical near you:** EFT freezes a corpse once it lies still; within 12 m of you it stays a ragdoll, so
   rounds, blasts and other bodies still move it. Walk away and EFT freezes it again (local only, not synced). "Never freeze corpses" (off) keeps them all physical.
+- **Walking pushes corpses:** walk or run into a physical body and it gets pushed the way you go.
 - **Smooth body collisions:** bodies roll down stairs instead of sinking into the steps and popping out, and a body
   lying on stairs can still be searched from above.
 
@@ -56,7 +57,7 @@ The host sends knockdowns to every Fika client.
 
 F12 (BepInEx Configuration Manager) > **Euphoria Style Physics**. Every main feature has its own switch in
 "1. General", and again at the top of its own section: "2. Dying", "3. Hit flinch", "4. Knockdowns" and "5. Corpses". The **Euphoric** style preset (default)
-writes its values once; change anything afterwards. **Custom** sets nothing for you.
+writes its values once (no kill is left to EFT's own ragdoll); change anything afterwards. **Custom** sets nothing for you.
 
 Toggle key: **Ctrl+Shift+E** turns the whole mod on or off in game.
 
@@ -67,6 +68,7 @@ Log: `BepInEx/LogOutput.log`, lines starting with `[EuphoriaStylePhysics]`. Plea
 - **RealTargets:** works together. Its bullet push (Impacts) moves dead bodies and dying bodies once they are going down
   (not while still on their feet); our own round push is then left out (so nothing is pushed twice). Its Blast injuries throws grenade kills within 6 m; our blast throw then leaves those bodies to it. If
   bodies fly too far from bullets, lower RealTargets' Impacts > Push strength.
+- **Inventory Walker:** works together; its loot range on a body is measured from where the body lies.
 - **HollywoodFX:** keep its "08. Ragdoll Effects" off. On, it pushes every shot body hard and changes every body
   part's weight, drag and bounce, which fights this mod. Its gore, blood and explosion effects are fine.
 
