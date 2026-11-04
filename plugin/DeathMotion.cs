@@ -968,6 +968,12 @@ internal sealed partial class DeathMotion : MonoBehaviour
                 float damp = Mathf.Min(2f * wn * inertia, 0.8f * own / dt);
                 float stiff = Mathf.Min(wn * wn * inertia, 0.3f * own / (dt * dt));
                 tau = Vector3.ClampMagnitude(stiff * err - damp * wRel, swing ? 120f : 60f);
+                // 0.20.0 (user: the floor clip animations are weak; log: limbs 33-70 deg off the clip, thighs and arms worst): the capped
+                // muscle could not lift a limb against its weight (a whole leg sagged ~30 deg before it balanced), and the hand pull that
+                // carries an arm is off during a clip. A limb a floor clip moves now has the weight of everything below its joint held by
+                // a steady torque (no step-to-step flip, so the caps above stay), fading out with the clip.
+                float hold = clipW > 0.3f && (arm >= 0 || b.Role is Role.ThighL or Role.ThighR or Role.CalfL or Role.CalfR) ? clipW * ClipStrength() : 0f;
+                if (hold > 0f) tau += Vector3.ClampMagnitude(-Vector3.Cross(r, Physics.gravity * m), 100f) * hold;
             }
             else tau = alpha * inertia;
             b.Rb.AddTorque(tau);
