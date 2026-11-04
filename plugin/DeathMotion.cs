@@ -383,6 +383,12 @@ internal sealed partial class DeathMotion : MonoBehaviour
         // 0.6.1 (user: bodies float right after dying): the support needs real ground under the feet; off it, Airborne has none
         float footGap = FootGap();
         bool airborne = !_knock && !lying && footGap > 0.15f;
+        if (!Plugin.DieLyingOrInAir.Value)   // 0.18.0: off, these deaths are EFT's ragdoll as before
+        {
+            if (fall) return Skip($"fall ({cause})");
+            if (lying) return Skip($"lying down (pelvis {height:F2} m above the feet)");
+            if (airborne) return Skip($"feet off the ground ({footGap:F2} m: jumping, falling, vaulting)");
+        }
         bool crouched = height < 0.7f;
         if (!_knock && Plugin.HeadshotInstantDrop.Value && part == EBodyPart.Head && (type & (EDamageType.Bullet | EDamageType.Sniper)) != 0)
             return Skip($"headshot, instant drop ({cause})");
@@ -936,7 +942,7 @@ internal sealed partial class DeathMotion : MonoBehaviour
             bool clipped = clipW > 0.5f;   // 0.18.0: the floor clip moves the hands, legs and head itself
             if (clipW > 0f) des = ClipDes(i, des, clipW);
             if (!clipped && arm >= 0 && _arms[arm].Goal != Goal.None) des = Reach(b, _arms[arm], des, right, fwd, ref k);
-            if (!clipped && _stepLeg >= 0) des = SwingLeg(i, des, fwd, ref k);   // 0.18.0: the stepping leg aims at its step
+            if (!clipped && _stepLeg >= 0 && Plugin.PlantFeet.Value) des = SwingLeg(i, des, fwd, ref k);   // 0.18.0: the stepping leg aims at its step
             if (!clipped && b.Role == Role.Head && _hasShooter && Plugin.LookAtShooter.Value && _style != Style.HeadRipple && _style != Style.HeadLegsGo)
                 des = LookAtShooter(b, des, Mathf.Max(hurt, _sitW));
             if (k <= 0.001f) continue;
@@ -950,7 +956,7 @@ internal sealed partial class DeathMotion : MonoBehaviour
             Vector3 alpha = Vector3.ClampMagnitude(wn * wn * err - 2f * wd * wRel, 400f);
             Vector3 tau;
             // 0.18.0: the swinging leg is sized like a reaching arm too: sized for the thigh alone it could not swing the leg
-            bool swing = _stepLeg >= 0 && (i == (_stepLeg == 0 ? _thighL : _thighR) || i == (_stepLeg == 0 ? _calfL : _calfR));
+            bool swing = _stepLeg >= 0 && Plugin.PlantFeet.Value && (i == (_stepLeg == 0 ? _thighL : _thighR) || i == (_stepLeg == 0 ? _calfL : _calfR));
             // a clip-driven limb swings everything below it (a leg kicking, an arm reaching up): sized for that, like a reach
             swing |= clipW > 0.3f && (arm >= 0 || b.Role is Role.ThighL or Role.ThighR or Role.CalfL or Role.CalfR);
             if (swing || arm >= 0 && _arms[arm].Goal != Goal.None && _arms[arm].W > 0f)
@@ -1462,8 +1468,9 @@ internal sealed partial class DeathMotion : MonoBehaviour
         // 0.18.0 (user: "deaths where they take steps dont seem to work"): the pelvis push dragged both feet along the floor, so no foot
         // ever fell behind and nothing stepped. The standing foot is planted (held where it touched down, up to about what floor grip
         // could hold), so the body tips over it and has to step.
-        if (_stepLeg != 0) Plant(ref _plantL, ref _plantedL, _ankleL, _bodies[_calfL].Rb, support);
-        if (_stepLeg != 1) Plant(ref _plantR, ref _plantedR, _ankleR, _bodies[_calfR].Rb, support);
+        bool plant = Plugin.PlantFeet.Value;   // 0.18.0: its own switch
+        if (plant && _stepLeg != 0) Plant(ref _plantL, ref _plantedL, _ankleL, _bodies[_calfL].Rb, support);
+        if (plant && _stepLeg != 1) Plant(ref _plantR, ref _plantedR, _ankleR, _bodies[_calfR].Rb, support);
         if (_stepLeg < 0)
         {
             _stepRest -= dt;
