@@ -40,8 +40,9 @@ internal static class CorpseWake
         SmoothCollisions(corpse.Ragdoll);
         var orig = corpse.Ragdoll._checkCorpseIsStill;
         if (orig != null)
-            corpse.Ragdoll._checkCorpseIsStill = (sleeping, t) => orig(sleeping, t) && !CorpseLeases.IsLeased(corpse) &&   // leased: EFT's answer
-                !(Plugin.IsOn && Plugin.CorpseWakeOn.Value && e.Near && !e.Failed);
+            // leased: EFT's own answer (2026-11-04, awnova: it was "&& !IsLeased", so a leased corpse always read "not still")
+            corpse.Ragdoll._checkCorpseIsStill = (sleeping, t) => orig(sleeping, t) && (CorpseLeases.IsLeased(corpse) ||
+                !(Plugin.IsOn && Plugin.CorpseWakeOn.Value && e.Near && !e.Failed));
     }
 
     private static Vector3 BodyPos(Entry e)
