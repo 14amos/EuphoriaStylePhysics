@@ -259,8 +259,7 @@ internal sealed class DeathMotion : MonoBehaviour
         if (_t > 0f)
             Plugin.Log.LogInfo($"[EuphoriaStylePhysics] {_name}: {(_knock ? "down" : "dying")} over after {_t:F2} s ({_endReason ?? "removed"})" +
                                $"{(_pelvis >= 0 && _bodies[_pelvis].Rb != null ? $", body {Vector3.Distance(_bodies[_pelvis].Rb.position, transform.position):F1} m from the root" : "")}" +
-                               $"{(_durAdded > 0f ? $", rounds kept it up {_durAdded:F2} s longer" : "")}{HandsReport()}" +
-                               $"{(_kneeWant > 0f ? $", knees bent L {_kneeMaxL:F0} R {_kneeMaxR:F0} deg (asked {_kneeWant:F0})" : "")}");
+                               $"{(_durAdded > 0f ? $", rounds kept it up {_durAdded:F2} s longer" : "")}{HandsReport()}");
         Active.Remove(this);
         foreach (var b in _bodies)
             if (b.Rb != null && Driven.TryGetValue(b.Rb, out var owner) && owner == this) Driven.Remove(b.Rb);
@@ -960,8 +959,6 @@ internal sealed class DeathMotion : MonoBehaviour
             p.Rb.AddTorque(-tau);
         }
 
-        KneeWatch(kneel * (1f - hurt));
-
         // support: the outside hand that holds the body up while it dies
         if (support > 0.001f)
         {
@@ -1030,36 +1027,6 @@ internal sealed class DeathMotion : MonoBehaviour
         if (_throesTo > 0f && _t >= _throesFrom && _t < _throesTo) Twitch();
         if (_knock && hurt > 0.3f && _sitW < 0.1f && _roll != 1 && Plugin.KnockdownWrithe.Value) Writhe(bodyRight);
         return true;
-    }
-
-    // 0.20.2 diagnostics (user: "it feels like [the calves are] not moving at all when they die"): how far each knee really bent
-    // from the pose it died in, against the bend asked for; and EFT's knee joint limits, once per session.
-    private float _kneeMaxL, _kneeMaxR, _kneeWant;
-    private static bool _loggedKneeJoint;
-    private void KneeWatch(float kneel)
-    {
-        _kneeWant = Mathf.Max(_kneeWant, 95f * kneel);
-        _kneeMaxL = Mathf.Max(_kneeMaxL, KneeBend(_calfL));
-        _kneeMaxR = Mathf.Max(_kneeMaxR, KneeBend(_calfR));
-        if (_loggedKneeJoint || _calfL < 0) return;
-        _loggedKneeJoint = true;
-        var j = _bodies[_calfL].Rb.GetComponent<Joint>();
-        string what = j switch
-        {
-            CharacterJoint cj => $"CharacterJoint axis {cj.axis} swingAxis {cj.swingAxis}, twist {cj.lowTwistLimit.limit:F0}..{cj.highTwistLimit.limit:F0}, " +
-                                 $"swing1 {cj.swing1Limit.limit:F0}, swing2 {cj.swing2Limit.limit:F0}, projection {cj.enableProjection}",
-            ConfigurableJoint c => $"ConfigurableJoint axis {c.axis}, x {c.angularXMotion} {c.lowAngularXLimit.limit:F0}..{c.highAngularXLimit.limit:F0}, " +
-                                   $"y {c.angularYMotion} {c.angularYLimit.limit:F0}, z {c.angularZMotion} {c.angularZLimit.limit:F0}",
-            null => "no joint",
-            _ => j.GetType().Name
-        };
-        Plugin.Log.LogInfo($"[EuphoriaStylePhysics] knee joint ({_bodies[_calfL].Rb.name}): {what}");
-    }
-    private float KneeBend(int calf)
-    {
-        if (calf < 0) return 0f;
-        var b = _bodies[calf];
-        return Quaternion.Angle(Quaternion.Inverse(_bodies[b.Parent].Rb.rotation) * b.Rb.rotation, b.Rel0);
     }
 
     // Bent knees, hips, a curled spine and a dropping head as the body kneels (world rotations put before the hold pose).
