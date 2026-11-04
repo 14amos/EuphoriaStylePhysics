@@ -151,12 +151,6 @@ internal sealed class DeathMotion : MonoBehaviour
     private int _stepLeg = -1;
     private bool _groundSnapped;   // 0.20.0: lying hurt took the landed pose as its rest pose
     private float _stepFast, _stepSwing = 0.28f;   // 0.17.5: how fast the push is (0-1) and this step's swing time
-    // 0.20.0 feet planting: the step's goal for the swing leg's muscles, where the step began, what the steps did (log), the planted feet
-    private int _steps;
-    private Vector3 _stepGoal, _stepFrom;
-    private float _stepMoved, _standMoved;
-    private Vector3 _plantL, _plantR;
-    private bool _plantedL, _plantedR;
     private float _stepT, _stepRest;
     private Vector3 _stepTarget;
     // last twitches
@@ -265,7 +259,7 @@ internal sealed class DeathMotion : MonoBehaviour
         if (_t > 0f)
             Plugin.Log.LogInfo($"[EuphoriaStylePhysics] {_name}: {(_knock ? "down" : "dying")} over after {_t:F2} s ({_endReason ?? "removed"})" +
                                $"{(_pelvis >= 0 && _bodies[_pelvis].Rb != null ? $", body {Vector3.Distance(_bodies[_pelvis].Rb.position, transform.position):F1} m from the root" : "")}" +
-                               $"{(_durAdded > 0f ? $", rounds kept it up {_durAdded:F2} s longer" : "")}{(_steps > 0 ? $", {_steps} catch steps (feet moved {_stepMoved:F2} m in them, body {_standMoved:F2} m while held up)" : "")}{HandsReport()}");
+                               $"{(_durAdded > 0f ? $", rounds kept it up {_durAdded:F2} s longer" : "")}{HandsReport()}");
         Active.Remove(this);
         foreach (var b in _bodies)
             if (b.Rb != null && Driven.TryGetValue(b.Rb, out var owner) && owner == this) Driven.Remove(b.Rb);
@@ -928,7 +922,6 @@ internal sealed class DeathMotion : MonoBehaviour
             if (_style == Style.Blast && !_landed) des = Curl(b.Role, 0.5f, bodyRight) * des;   // balled up in the air
             int arm = ArmOf(b.Role);
             if (arm >= 0 && _arms[arm].Goal != Goal.None) des = Reach(b, _arms[arm], des, right, fwd, ref k);
-            if (_stepLeg >= 0) des = SwingLeg(i, des, fwd, ref k);   // 0.20.0: the stepping leg aims at its step
             if (b.Role == Role.Head && _hasShooter && Plugin.LookAtShooter.Value && _style != Style.HeadRipple && _style != Style.HeadLegsGo)
                 des = LookAtShooter(b, des, Mathf.Max(hurt, _sitW));
             if (k <= 0.001f) continue;
@@ -941,9 +934,7 @@ internal sealed class DeathMotion : MonoBehaviour
             float wd = Mathf.Min(wn, 0.4f / (dt * (1f + inertia / Mathf.Max(Inertia(p.Rb), 1e-5f))));
             Vector3 alpha = Vector3.ClampMagnitude(wn * wn * err - 2f * wd * wRel, 400f);
             Vector3 tau;
-            // 0.20.0: the swinging leg is sized like a reaching arm too: sized for the thigh alone it could not swing the leg
-            bool swing = _stepLeg >= 0 && (i == (_stepLeg == 0 ? _thighL : _thighR) || i == (_stepLeg == 0 ? _calfL : _calfR));
-            if (swing || arm >= 0 && _arms[arm].Goal != Goal.None && _arms[arm].W > 0f)
+            if (arm >= 0 && _arms[arm].Goal != Goal.None && _arms[arm].W > 0f)
             {
                 // 0.6.3 (user: no hands on wounds or walls seen): a reaching arm is sized for everything it swings (forearm, hand)
                 // and holds that weight against gravity; sized for the one body alone it could not lift the arm at all.
@@ -957,7 +948,7 @@ internal sealed class DeathMotion : MonoBehaviour
                 float own = Inertia(b.Rb);
                 float damp = Mathf.Min(2f * wn * inertia, 0.8f * own / dt);
                 float stiff = Mathf.Min(wn * wn * inertia, 0.3f * own / (dt * dt));
-                tau = Vector3.ClampMagnitude(stiff * err - damp * wRel, swing ? 120f : 60f);
+                tau = Vector3.ClampMagnitude(stiff * err - damp * wRel, 60f);
             }
             else tau = alpha * inertia;
             b.Rb.AddTorque(tau);
@@ -1447,25 +1438,14 @@ internal sealed class DeathMotion : MonoBehaviour
     private void CatchStep(float dt, Rigidbody pelvis, Vector3 vH, Vector3 right, float support)
     {
         Vector3 under = new Vector3(pelvis.position.x, _groundY, pelvis.position.z);
-        _standMoved += vH.magnitude * dt;
-        // 0.20.0 (user: "deaths where they take steps dont seem to work"): the pelvis push dragged both feet along the floor, so no foot
-        // ever fell behind and nothing stepped. The standing foot is planted (held where it touched down, up to about what floor grip
-        // could hold), so the body tips over it and has to step.
-        if (_stepLeg != 0) Plant(ref _plantL, ref _plantedL, _ankleL, _bodies[_calfL].Rb, support);
-        if (_stepLeg != 1) Plant(ref _plantR, ref _plantedR, _ankleR, _bodies[_calfR].Rb, support);
         if (_stepLeg < 0)
         {
             _stepRest -= dt;
             if (_stepRest > 0f || support < 0.35f) return;
-            // measured from where the body is heading (about 0.3 s ahead), not only from under it: it steps to catch the fall
-            Vector3 cp = under + vH * 0.3f;
-            float offL = Flat3(_ankleL.position - cp).magnitude, offR = Flat3(_ankleR.position - cp).magnitude;
-            if (Mathf.Max(offL, offR) < Mathf.Lerp(0.26f, 0.18f, Mathf.InverseLerp(1f, 3.5f, vH.magnitude))) return;   // fast: step sooner
+            float offL = Flat3(_ankleL.position - under).magnitude, offR = Flat3(_ankleR.position - under).magnitude;
+            if (Mathf.Max(offL, offR) < Mathf.Lerp(0.28f, 0.2f, Mathf.InverseLerp(1f, 3.5f, vH.magnitude))) return;   // fast: step sooner
             _stepLeg = offL > offR ? 0 : 1;
-            if (_stepLeg == 0) _plantedL = false; else _plantedR = false;
             _stepT = 0f;
-            _stepFrom = (_stepLeg == 0 ? _ankleL : _ankleR).position;
-            _steps++;
             // 0.17.5 (high Stumble values looked like sliding back): a fast push takes quicker, longer, stronger steps, aimed where
             // the pelvis will be when the foot lands
             _stepFast = Mathf.InverseLerp(1f, 3.5f, vH.magnitude);
@@ -1479,62 +1459,15 @@ internal sealed class DeathMotion : MonoBehaviour
         float s = Mathf.Clamp01(_stepT / _stepSwing);
         _stepTarget.y = _groundY;   // keep tracking the ground the body started on
         Vector3 goal = _stepTarget + Vector3.up * (0.06f + 0.12f * Mathf.Sin(Mathf.PI * s));
-        _stepGoal = goal;   // the swing leg's muscles aim the foot here (SwingLeg); the pull below only helps it along
         // damped against the body's own speed, not the ground: a foot moving along with a fast stumble is not braked
         Vector3 v = calf.GetPointVelocity(ankle.position) - vH;
         Vector3 f = calf.mass * (300f * (goal - ankle.position) - 35f * v);
         calf.AddForceAtPosition(Vector3.ClampMagnitude(f, calf.mass * (60f + 90f * _stepFast)) * support, ankle.position);
         if (_stepT >= _stepSwing)
         {
-            _stepMoved += Flat3(ankle.position - _stepFrom).magnitude;   // how far the feet really travelled in their steps (log)
-            _stepLeg = -1;   // the landed foot plants on the next physics step
+            _stepLeg = -1;
             _stepRest = Mathf.Lerp(0.08f, 0.02f, _stepFast);
         }
-    }
-
-    // a foot on the floor stays where it touched down: a horizontal spring at the ankle, capped near what the floor could grip
-    private void Plant(ref Vector3 at, ref bool planted, Transform ankle, Rigidbody calf, float support)
-    {
-        Vector3 pos = ankle.position;
-        if (!planted)
-        {
-            if (pos.y - _groundY > 0.15f) return;   // in the air
-            at = pos;
-            planted = true;
-        }
-        Vector3 e = Flat3(at - pos);
-        if (e.magnitude > 0.3f) { planted = false; return; }   // torn loose: it slid, it will plant again where it is
-        Vector3 v = Flat3(calf.GetPointVelocity(pos));
-        Vector3 f = calf.mass * (250f * e - 30f * v);
-        calf.AddForceAtPosition(Vector3.ClampMagnitude(f, calf.mass * 70f) * support, pos);
-    }
-
-    // 0.20.0 (user: "they still dont actually take any steps"; log: 2-4 catch steps counted, bodies slid 0.5-4.5 m): the leg muscles
-    // held thigh and calf at the pose of the moment of the hit (the stiffest muscles in the body) and the ankle pull alone could not
-    // beat them, so the foot dragged. The swinging leg's own muscles aim it: two-bone IK from the hip to the step goal, knee
-    // forward, stronger than the hold, like a reaching arm.
-    private Quaternion SwingLeg(int i, Quaternion holdDes, Vector3 fwd, ref float k)
-    {
-        int thigh = _stepLeg == 0 ? _thighL : _thighR, calf = _stepLeg == 0 ? _calfL : _calfR;
-        if (i != thigh && i != calf) return holdDes;
-        var ankle = _stepLeg == 0 ? _ankleL : _ankleR;
-        Vector3 hip = _bodies[thigh].Rb.position, knee = _bodies[calf].Rb.position, foot = ankle.position;
-        float upLen = Vector3.Distance(hip, knee), loLen = Vector3.Distance(knee, foot);
-        if (upLen < 0.05f || loLen < 0.05f) return holdDes;
-        Vector3 toG = _stepGoal - hip;
-        float dist = Mathf.Clamp(toG.magnitude, 0.1f, upLen + loLen - 0.02f);
-        Vector3 dir = toG.sqrMagnitude > 1e-8f ? toG.normalized : Vector3.down;
-        float cosA = Mathf.Clamp((upLen * upLen + dist * dist - loLen * loLen) / (2f * upLen * dist), -1f, 1f);
-        Vector3 pole = fwd - Vector3.Dot(fwd, dir) * dir;   // the knee bends forward
-        if (pole.sqrMagnitude < 1e-6f) pole = Vector3.Cross(dir, Vector3.Cross(Vector3.up, fwd));
-        Vector3 kneeT = hip + (cosA * dir + Mathf.Sqrt(1f - cosA * cosA) * pole.normalized) * upLen;
-        var rb = _bodies[i].Rb;
-        Quaternion ik = i == thigh
-            ? Quaternion.FromToRotation(knee - hip, kneeT - hip) * rb.rotation
-            : Quaternion.FromToRotation(foot - knee, _stepGoal - kneeT) * rb.rotation;
-        float w = Smooth(0f, 0.05f, _stepT);   // eases in over the first few physics steps of the swing
-        k = Mathf.Max(k, 1.2f * w * Plugin.MuscleScale.Value);
-        return Quaternion.Slerp(holdDes, ik, w);
     }
 
     // 0.16.0 (user: getting up "warps"): EFT's prone lies face down, so a body on its back turned over inside the blend. Before
