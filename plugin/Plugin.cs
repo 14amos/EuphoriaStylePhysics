@@ -20,7 +20,7 @@ namespace EuphoriaStylePhysics;
 // Project Real Limbs (Project Zomboid) by deewindler, https://www.youtube.com/@DwindleDwindle (CC BY-NC 4.0); none of its
 // code is used here (its Java solver has no Unity counterpart).
 [BepInDependency("com.fika.core", BepInDependency.DependencyFlags.SoftDependency)]
-[BepInPlugin("amos.euphoriastylephysics", "Euphoria Style Physics", "0.20.1")]
+[BepInPlugin("amos.euphoriastylephysics", "Euphoria Style Physics", "0.21.0")]
 public sealed class Plugin : BaseUnityPlugin
 {
     internal static ManualLogSource Log;
@@ -72,7 +72,8 @@ public sealed class Plugin : BaseUnityPlugin
     internal static ConfigEntry<bool> KnockdownEnabled;
     internal static ConfigEntry<bool> BlastThrowWithRealTargets;
     internal static ConfigEntry<float> HoldUp;
-    internal static ConfigEntry<bool> CorpseWakeOn, CorpseNeverFreeze;
+    internal static ConfigEntry<bool> CorpseWakeOn, CorpseNeverFreeze, WalkPush;
+    internal static ConfigEntry<float> WalkPushScale;
     internal static ConfigEntry<float> CorpseWakeDistance;
     internal static ConfigEntry<int> CorpseWakeMax;
     internal static ConfigEntry<bool> SmoothCollisions, SearchThroughFloor;
@@ -199,6 +200,12 @@ public sealed class Plugin : BaseUnityPlugin
             "Every corpse stays a ragdoll for the whole raid, however far away (distance and cap above ignored). A settled body "
             + "sleeps in the physics engine and costs little until something touches it; raids with very many bodies use more "
             + "memory and physics time. Needs Corpses stay physical near you.");
+        // 0.21.0 (user: "why dont bodies move when we run into them?")
+        WalkPush = Config.Bind(c, "Walking pushes corpses", true,
+            "Walking or running into a body pushes it the way you go (legs only, at up to your speed). Only bodies that are physical "
+            + "move: needs Corpses stay physical near you. Only on your PC.");
+        WalkPushScale = Config.Bind(c, "Walk push strength", 1f, new ConfigDescription(
+            "How hard walking into a body pushes it (1 = at your speed).", new AcceptableValueRange<float>(0f, 2f)));
         // 0.17.4 (user clip: rolling down stairs jitters, then the body cannot be searched from above)
         SmoothCollisions = Config.Bind(c, "Smooth body collisions", true,
             "Bodies use continuous (speculative) collisions, more solver steps and a soft push-out from geometry, so they roll down "
@@ -344,7 +351,7 @@ public sealed class Plugin : BaseUnityPlugin
             var obsMethod = observed == null ? null : AccessTools.DeclaredMethod(observed, nameof(Player.ShotReactions));
             if (obsMethod != null)
                 h.Patch(obsMethod, postfix: new HarmonyMethod(typeof(Plugin), nameof(ShotReactionsPostfix)));
-            Log.LogInfo($"[EuphoriaStylePhysics] 0.20.1 loaded; toggle key {ToggleKey.Value}; patches on: Corpse.TryToCreateRagdoll, sleep hierarchy, Physics.Simulate, BodyPartCollider.ApplyHit, Player.BodyUpdate/MovementUpdate, FirearmController.SetTriggerPressed, BotSteering.ManualFixedUpdate, ExplosionSharedMethods.Explosion, Player.ShotReactions, CorpseRagdoll.StopRigidbody/AttachWeapon, loot search log" +
+            Log.LogInfo($"[EuphoriaStylePhysics] 0.21.0 loaded; toggle key {ToggleKey.Value}; patches on: Corpse.TryToCreateRagdoll, sleep hierarchy, Physics.Simulate, BodyPartCollider.ApplyHit, Player.BodyUpdate/MovementUpdate, FirearmController.SetTriggerPressed, BotSteering.ManualFixedUpdate, ExplosionSharedMethods.Explosion, Player.ShotReactions, CorpseRagdoll.StopRigidbody/AttachWeapon, loot search log" +
                         $"{(obsMethod != null ? " + ObservedPlayer.ShotReactions" : "")}; Fika {(observed != null ? "present" : "absent")}");
         }
         catch (Exception e)
@@ -444,6 +451,7 @@ public sealed class Plugin : BaseUnityPlugin
         Flinch.KeepInstalled();
         Knockdown.Tick();
         CorpseWake.Tick();
+        CorpseBump.Tick();
         if (ToggleKey.Value.IsDown())
         {
             Enabled.Value = !Enabled.Value;
