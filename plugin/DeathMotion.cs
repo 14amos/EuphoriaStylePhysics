@@ -13,7 +13,7 @@ namespace EuphoriaStylePhysics;
 // between each body and its parent toward the pose it died in (plus bent knees, a curled spine, arms reaching for the
 // wound, a wall or the ground); "support" is an outside hand that holds the pelvis up and the torso upright and fades out,
 // so the body sags, stumbles and drops instead of folding at once. All of it is stepped right before each physics step.
-internal sealed partial class DeathMotion : MonoBehaviour
+internal sealed class DeathMotion : MonoBehaviour
 {
     // 0.20.0 (user: "deaths lying down or in the air"): Ground = killed lying down, Airborne = killed with the feet off the ground;
     // both were EFT's ragdoll before. No outside support for either (nothing to hold up, nothing to stand on).
@@ -510,8 +510,6 @@ internal sealed partial class DeathMotion : MonoBehaviour
                 _closeness = 0.6f;
             }
         }
-        _hitPart = part;   // 0.20.0 floor clips: a leg wound sits up holding the leg
-        ClipBones();
         _braces = Plugin.GroundBrace.Value && _style != Style.HeadLegsGo && _style != Style.Blast && _style != Style.Ground
                   && (_style == Style.Tumble || _style == Style.Knock || _style == Style.Airborne || Often(0.7f));
 
@@ -822,7 +820,6 @@ internal sealed partial class DeathMotion : MonoBehaviour
 
         _t += dt;
 
-        ClipAdvance(dt);   // 0.20.0: the floor clip's clock, slowed while the body lags
         float end = Mathf.Max(Mathf.Max(_dur + 0.5f, _throesTo), _lieHurt ? _hurtTo + 0.3f : 0f);
         if (_t > end) { _endReason = "done"; return false; }
 
@@ -875,7 +872,6 @@ internal sealed partial class DeathMotion : MonoBehaviour
                 kneel = _kneelAmount * Smooth(0.15f * d, 0.6f * d, _t);
                 break;
         }
-        if (!_knock && _lieHurt && !_floorTried && _t >= _hurtFrom) TryFloorClip(_hitPart);   // 0.20.0: a floor clip in place of the curl
         float hurt = _lieHurt ? Smooth(_hurtFrom, _hurtFrom + 0.5f, _t) * (1f - Smooth(_hurtTo - 1f, _hurtTo, _t)) : 0f;
         tone = Mathf.Max(tone, 0.3f * hurt);
         // 0.20.0: the lying-hurt pose was an offset on the STANDING pose of the moment of death, so on a body lying down the muscles
@@ -889,8 +885,6 @@ internal sealed partial class DeathMotion : MonoBehaviour
         }
         _sitW = _sitFor > 0f ? Smooth(_sitFrom, _sitFrom + 0.9f, _t) * (1f - Smooth(_sitTo, _sitTo + 0.6f, _t)) : 0f;
         tone = Mathf.Max(tone, 0.65f * _sitW);
-        float clipW = ClipW();
-        if (clipW > 0f && _clip.Floor) tone = Mathf.Max(tone, 0.75f * clipW * ClipStrength());   // lifting limbs needs muscle
         tone *= Plugin.MuscleScale.Value;
 
         Vector3 fwd = Flat(pelvis.rotation * _fwdLocal);
@@ -913,7 +907,7 @@ internal sealed partial class DeathMotion : MonoBehaviour
                     rt = 1f - Smooth(0.05f, 0.3f, _t);
             }
             if (_style == Style.LegGives && IsLeg(b.Role, _legSide)) rt = 0.35f;
-            if (hurt > 0f && ArmOf(b.Role) >= 0 && clipW < 0.5f) rt *= 1f - hurt;   // no rifle-hold pose on the ground; an arm with a goal gets its own strength
+            if (hurt > 0f && ArmOf(b.Role) >= 0) rt *= 1f - hurt;   // no rifle-hold pose on the ground; an arm with a goal gets its own strength
             if (_t < b.RelaxTo) rt *= 0.3f;   // 0.17.5: the part a round just hit goes with it for a moment
             b.Tone = rt;
         }
@@ -933,11 +927,9 @@ internal sealed partial class DeathMotion : MonoBehaviour
             if (_sitW > 0f) des = SitPose(b.Role, _sitW, bodyRight) * des;
             if (_style == Style.Blast && !_landed) des = Curl(b.Role, 0.5f, bodyRight) * des;   // balled up in the air
             int arm = ArmOf(b.Role);
-            bool clipped = clipW > 0.5f;   // 0.20.0: the floor clip moves the hands, legs and head itself
-            if (clipW > 0f) des = ClipDes(i, des, clipW);
-            if (!clipped && arm >= 0 && _arms[arm].Goal != Goal.None) des = Reach(b, _arms[arm], des, right, fwd, ref k);
-            if (!clipped && _stepLeg >= 0) des = SwingLeg(i, des, fwd, ref k);   // 0.20.0: the stepping leg aims at its step
-            if (!clipped && b.Role == Role.Head && _hasShooter && Plugin.LookAtShooter.Value && _style != Style.HeadRipple && _style != Style.HeadLegsGo)
+            if (arm >= 0 && _arms[arm].Goal != Goal.None) des = Reach(b, _arms[arm], des, right, fwd, ref k);
+            if (_stepLeg >= 0) des = SwingLeg(i, des, fwd, ref k);   // 0.20.0: the stepping leg aims at its step
+            if (b.Role == Role.Head && _hasShooter && Plugin.LookAtShooter.Value && _style != Style.HeadRipple && _style != Style.HeadLegsGo)
                 des = LookAtShooter(b, des, Mathf.Max(hurt, _sitW));
             if (k <= 0.001f) continue;
             float wn = Mathf.Min(b.Wn * Mathf.Sqrt(k), wnMax);
@@ -951,8 +943,6 @@ internal sealed partial class DeathMotion : MonoBehaviour
             Vector3 tau;
             // 0.20.0: the swinging leg is sized like a reaching arm too: sized for the thigh alone it could not swing the leg
             bool swing = _stepLeg >= 0 && (i == (_stepLeg == 0 ? _thighL : _thighR) || i == (_stepLeg == 0 ? _calfL : _calfR));
-            // a clip-driven limb swings everything below it (a leg kicking, an arm reaching up): sized for that, like a reach
-            swing |= clipW > 0.3f && (arm >= 0 || b.Role is Role.ThighL or Role.ThighR or Role.CalfL or Role.CalfR);
             if (swing || arm >= 0 && _arms[arm].Goal != Goal.None && _arms[arm].W > 0f)
             {
                 // 0.6.3 (user: no hands on wounds or walls seen): a reaching arm is sized for everything it swings (forearm, hand)
@@ -968,12 +958,6 @@ internal sealed partial class DeathMotion : MonoBehaviour
                 float damp = Mathf.Min(2f * wn * inertia, 0.8f * own / dt);
                 float stiff = Mathf.Min(wn * wn * inertia, 0.3f * own / (dt * dt));
                 tau = Vector3.ClampMagnitude(stiff * err - damp * wRel, swing ? 120f : 60f);
-                // 0.20.0 (user: the floor clip animations are weak; log: limbs 33-70 deg off the clip, thighs and arms worst): the capped
-                // muscle could not lift a limb against its weight (a whole leg sagged ~30 deg before it balanced), and the hand pull that
-                // carries an arm is off during a clip. A limb a floor clip moves now has the weight of everything below its joint held by
-                // a steady torque (no step-to-step flip, so the caps above stay), fading out with the clip.
-                float hold = clipW > 0.3f && (arm >= 0 || b.Role is Role.ThighL or Role.ThighR or Role.CalfL or Role.CalfR) ? clipW * ClipStrength() : 0f;
-                if (hold > 0f) tau += Vector3.ClampMagnitude(-Vector3.Cross(r, Physics.gravity * m), 100f) * hold;
             }
             else tau = alpha * inertia;
             b.Rb.AddTorque(tau);
@@ -1044,8 +1028,7 @@ internal sealed partial class DeathMotion : MonoBehaviour
 
         if (_sitW > 0.001f) HoldSitting(pelvis, wnMax);
         if (_knock && !_remote && _sitW < 0.1f && Plugin.KnockdownRollOver.Value) RollOver(wnMax);
-        if (clipW > 0f) ClipGuide(dt, clipW * ClipStrength(), wnMax);   // 0.20.0: turns the trunk and draws the hips the clip's way
-        if (clipW < 0.5f) PullHands(dt);
+        PullHands(dt);
         if (_throesTo > 0f && _t >= _throesFrom && _t < _throesTo) Twitch();
         if (_knock && hurt > 0.3f && _sitW < 0.1f && _roll != 1 && Plugin.KnockdownWrithe.Value) Writhe(bodyRight);
         return true;

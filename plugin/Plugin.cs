@@ -56,7 +56,7 @@ public sealed class Plugin : BaseUnityPlugin
     internal static ConfigEntry<float> WallReach;
     internal static ConfigEntry<int> MaxDying;
     internal static ConfigEntry<float> MaxDistance;
-    internal static ConfigEntry<bool> CorpseHits, FloorClips;
+    internal static ConfigEntry<bool> CorpseHits;
     internal static ConfigEntry<bool> BurstKeepsUp;
     internal static ConfigEntry<float> LieWoundedChance;
     internal static ConfigEntry<bool> MeleeClutch;
@@ -224,12 +224,6 @@ public sealed class Plugin : BaseUnityPlugin
         CorpseHits = Config.Bind(d, "Rounds push dying bodies", true,
             "Our own push: a round into a body that is dying or still falling pushes the part it hits. Left to RealTargets when its "
             + "Impacts push corpses (so a body is not pushed twice). Either way a dying body gives way to the hit for a moment.");
-        // 0.20.0 (user: "lets try the floor clips"): MotionBricks clips made from EFT's own poses, lying wounded
-        FloorClips = Config.Bind(d, "Floor clips", true,
-            "A body lying wounded plays a floor clip for the way it landed instead of the curl: on its back it curls up, rolls, "
-            + "sits up holding the wound, reaches out, pleads, takes a last breath, or tries to push itself up; face down it crawls "
-            + "away; on its side it curls up or covers its head; a leg wound sits up holding the leg. Needs Lying wounded chance. "
-            + "The clips are files in plugins/EuphoriaStylePhysics/clips.");
         LieWoundedChance = Config.Bind(d, "Lying wounded chance", 0.4f,
             new ConfigDescription("Share of bodies that lie hurt for 2-5 s after the fall (curl up, a hand on the wound or reaching out) before going still. "
                 + "Not after headshots or blasts.",
@@ -299,7 +293,6 @@ public sealed class Plugin : BaseUnityPlugin
 
         LinkFeatureSwitches();     // first: bound before the clean-up, or it removed (and rewrote) them every launch
         CarryOverMovedSettings();
-        ClipLibrary.Load(System.IO.Path.GetDirectoryName(Info.Location));   // 0.20.0: MotionBricks floor clips
 
         try
         {
