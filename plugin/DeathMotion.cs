@@ -636,8 +636,11 @@ internal sealed class DeathMotion : MonoBehaviour
         bool dying = Driven.TryGetValue(rb, out var dm) && dm != null;
         if (dying)
         {
-            dm.TakeHit(rb, dir);
             if (Plugin.BurstKeepsUp.Value) dm.TakeRound(rb);
+            // 0.20.0 (user: "when they die they dont get pushed by rounds until theyre on the ground"): while its time on its feet lasts
+            // a round neither pushes it nor makes the hold give way; once it is down, rounds push it as before
+            if (dm.OnFeet) return;
+            dm.TakeHit(rb, dir);
         }
         // 0.17.5: our own push only when RealTargets does not push corpses itself (both together pushed twice)
         bool push = Plugin.CorpseHits.Value && !Plugin.RealTargetsPushesCorpses();
@@ -665,6 +668,7 @@ internal sealed class DeathMotion : MonoBehaviour
             Plugin.Log.LogInfo($"[EuphoriaStylePhysics] round #{_roundLogs} into {(dying ? "a dying" : "a dead")} body ({rb.name}): impulse {impulse:F1} N s, dmg {damage:F0}");
     }
 
+    private bool OnFeet => !_knock && _t < _dur;   // 0.20.0: still in its time on its feet (rounds do not push it yet)
     private float _yieldUntil = -1f;
     private Vector3 _pushVel, _pushFrom, _hitDir, _hitV0;
 
