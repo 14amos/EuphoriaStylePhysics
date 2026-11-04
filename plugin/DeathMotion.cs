@@ -778,7 +778,7 @@ internal sealed class DeathMotion : MonoBehaviour
                 if (!_loggedFling)
                 {
                     _loggedFling = true;
-                    Plugin.Log.LogWarning($"[EuphoriaStylePhysics] {_name}: {b.Rb.name} at {b.Rb.velocity.magnitude:F1} m/s, capped to {cap} (the body was flying apart)");
+                    Plugin.Log.LogWarning($"[EuphoriaStylePhysics] {_name}: {b.Rb.name} at {b.Rb.velocity.magnitude:F1} m/s (up {b.Rb.velocity.y:F1}) at {_t:F2} s, capped to {cap} (the body was flying apart)");
                 }
                 b.Rb.velocity = b.Rb.velocity.normalized * cap;
             }

@@ -678,7 +678,20 @@ public sealed class Plugin : BaseUnityPlugin
             }
             if (_otherWeaponDrop == 1) return;
             var spring = weaponRigidbody.GetComponent<SpringJoint>();
-            if (spring != null) UnityEngine.Object.Destroy(spring);
+            if (spring != null)
+            {
+                UnityEngine.Object.Destroy(spring);
+                // 0.20.0 (user: bots flew up while dying, then back; log: heads at 10-17 m/s right after the drop): EFT puts the weapon
+                // in the right palm and its strap lets it hit the body. Loose, it sat inside the hand and chest colliders and shoved
+                // them apart. The dropped weapon no longer touches its own body (it still lands on the ground).
+                var body = __instance._playerBody;
+                if (body != null)
+                {
+                    var mine = weaponRigidbody.GetComponentsInChildren<Collider>(true);
+                    foreach (var bc in body.GetComponentsInChildren<Collider>(true))
+                        foreach (var wc in mine) Physics.IgnoreCollision(wc, bc, true);
+                }
+            }
             else weaponRigidbody.gameObject.SetActive(false);
             Log.LogInfo($"[EuphoriaStylePhysics] corpse of {CorpseName(__instance)}: weapon {weaponRigidbody.name} {(spring != null ? "dropped (strap removed)" : "hidden (held in hand)")}");
         }
