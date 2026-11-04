@@ -15,7 +15,7 @@ namespace EuphoriaStylePhysics;
 // so the body sags, stumbles and drops instead of folding at once. All of it is stepped right before each physics step.
 internal sealed partial class DeathMotion : MonoBehaviour
 {
-    // 0.18.0 (user: "deaths lying down or in the air"): Ground = killed lying down, Airborne = killed with the feet off the ground;
+    // 0.20.0 (user: "deaths lying down or in the air"): Ground = killed lying down, Airborne = killed with the feet off the ground;
     // both were EFT's ragdoll before. No outside support for either (nothing to hold up, nothing to stand on).
     private enum Style { Stagger, LegGives, HeadRipple, HeadLegsGo, Slump, Tumble, Clutch, Knock, Blast, Ground, Airborne }
     private enum Role { Other, Pelvis, Spine, Neck, Head, ThighL, ThighR, CalfL, CalfR, UpperL, UpperR, ForeL, ForeR, HandL, HandR, FootL, FootR }
@@ -27,7 +27,7 @@ internal sealed partial class DeathMotion : MonoBehaviour
         public int Parent = -1;
         public Role Role;
         public Quaternion Rel0;   // rotation relative to the parent body when it died
-        public Quaternion RelGround = Quaternion.identity;   // 0.18.0: the same, in the pose it landed in (lying hurt moves around it)
+        public Quaternion RelGround = Quaternion.identity;   // 0.20.0: the same, in the pose it landed in (lying hurt moves around it)
         public float Wn;          // muscle natural frequency, rad/s
         public float Tone = 1f;   // per-body muscle multiplier (0: limp)
         public float RelaxTo = -1f;   // 0.17.5: a round just hit it: its muscle gives way until then
@@ -149,9 +149,9 @@ internal sealed partial class DeathMotion : MonoBehaviour
     private bool _momentumGiven;
     // catch steps
     private int _stepLeg = -1;
-    private bool _groundSnapped;   // 0.18.0: lying hurt took the landed pose as its rest pose
+    private bool _groundSnapped;   // 0.20.0: lying hurt took the landed pose as its rest pose
     private float _stepFast, _stepSwing = 0.28f;   // 0.17.5: how fast the push is (0-1) and this step's swing time
-    // 0.18.0 feet planting: the step's goal for the swing leg's muscles, where the step began, what the steps did (log), the planted feet
+    // 0.20.0 feet planting: the step's goal for the swing leg's muscles, where the step began, what the steps did (log), the planted feet
     private int _steps;
     private Vector3 _stepGoal, _stepFrom;
     private float _stepMoved, _standMoved;
@@ -510,7 +510,7 @@ internal sealed partial class DeathMotion : MonoBehaviour
                 _closeness = 0.6f;
             }
         }
-        _hitPart = part;   // 0.18.0 floor clips: a leg wound sits up holding the leg
+        _hitPart = part;   // 0.20.0 floor clips: a leg wound sits up holding the leg
         ClipBones();
         _braces = Plugin.GroundBrace.Value && _style != Style.HeadLegsGo && _style != Style.Blast && _style != Style.Ground
                   && (_style == Style.Tumble || _style == Style.Knock || _style == Style.Airborne || Often(0.7f));
@@ -822,7 +822,7 @@ internal sealed partial class DeathMotion : MonoBehaviour
 
         _t += dt;
 
-        ClipAdvance(dt);   // 0.18.0: the floor clip's clock, slowed while the body lags
+        ClipAdvance(dt);   // 0.20.0: the floor clip's clock, slowed while the body lags
         float end = Mathf.Max(Mathf.Max(_dur + 0.5f, _throesTo), _lieHurt ? _hurtTo + 0.3f : 0f);
         if (_t > end) { _endReason = "done"; return false; }
 
@@ -875,10 +875,10 @@ internal sealed partial class DeathMotion : MonoBehaviour
                 kneel = _kneelAmount * Smooth(0.15f * d, 0.6f * d, _t);
                 break;
         }
-        if (!_knock && _lieHurt && !_floorTried && _t >= _hurtFrom) TryFloorClip(_hitPart);   // 0.18.0: a floor clip in place of the curl
+        if (!_knock && _lieHurt && !_floorTried && _t >= _hurtFrom) TryFloorClip(_hitPart);   // 0.20.0: a floor clip in place of the curl
         float hurt = _lieHurt ? Smooth(_hurtFrom, _hurtFrom + 0.5f, _t) * (1f - Smooth(_hurtTo - 1f, _hurtTo, _t)) : 0f;
         tone = Mathf.Max(tone, 0.3f * hurt);
-        // 0.18.0: the lying-hurt pose was an offset on the STANDING pose of the moment of death, so on a body lying down the muscles
+        // 0.20.0: the lying-hurt pose was an offset on the STANDING pose of the moment of death, so on a body lying down the muscles
         // pulled it back toward standing (and threw bodies killed lying down). When lying hurt starts, the pose it actually landed in
         // is taken as the new rest pose; the curl moves around that from then on.
         if (!_knock && !_groundSnapped && hurt > 0.001f)
@@ -933,10 +933,10 @@ internal sealed partial class DeathMotion : MonoBehaviour
             if (_sitW > 0f) des = SitPose(b.Role, _sitW, bodyRight) * des;
             if (_style == Style.Blast && !_landed) des = Curl(b.Role, 0.5f, bodyRight) * des;   // balled up in the air
             int arm = ArmOf(b.Role);
-            bool clipped = clipW > 0.5f;   // 0.18.0: the floor clip moves the hands, legs and head itself
+            bool clipped = clipW > 0.5f;   // 0.20.0: the floor clip moves the hands, legs and head itself
             if (clipW > 0f) des = ClipDes(i, des, clipW);
             if (!clipped && arm >= 0 && _arms[arm].Goal != Goal.None) des = Reach(b, _arms[arm], des, right, fwd, ref k);
-            if (!clipped && _stepLeg >= 0) des = SwingLeg(i, des, fwd, ref k);   // 0.18.0: the stepping leg aims at its step
+            if (!clipped && _stepLeg >= 0) des = SwingLeg(i, des, fwd, ref k);   // 0.20.0: the stepping leg aims at its step
             if (!clipped && b.Role == Role.Head && _hasShooter && Plugin.LookAtShooter.Value && _style != Style.HeadRipple && _style != Style.HeadLegsGo)
                 des = LookAtShooter(b, des, Mathf.Max(hurt, _sitW));
             if (k <= 0.001f) continue;
@@ -949,7 +949,7 @@ internal sealed partial class DeathMotion : MonoBehaviour
             float wd = Mathf.Min(wn, 0.4f / (dt * (1f + inertia / Mathf.Max(Inertia(p.Rb), 1e-5f))));
             Vector3 alpha = Vector3.ClampMagnitude(wn * wn * err - 2f * wd * wRel, 400f);
             Vector3 tau;
-            // 0.18.0: the swinging leg is sized like a reaching arm too: sized for the thigh alone it could not swing the leg
+            // 0.20.0: the swinging leg is sized like a reaching arm too: sized for the thigh alone it could not swing the leg
             bool swing = _stepLeg >= 0 && (i == (_stepLeg == 0 ? _thighL : _thighR) || i == (_stepLeg == 0 ? _calfL : _calfR));
             // a clip-driven limb swings everything below it (a leg kicking, an arm reaching up): sized for that, like a reach
             swing |= clipW > 0.3f && (arm >= 0 || b.Role is Role.ThighL or Role.ThighR or Role.CalfL or Role.CalfR);
@@ -1038,7 +1038,7 @@ internal sealed partial class DeathMotion : MonoBehaviour
 
         if (_sitW > 0.001f) HoldSitting(pelvis, wnMax);
         if (_knock && !_remote && _sitW < 0.1f && Plugin.KnockdownRollOver.Value) RollOver(wnMax);
-        if (clipW > 0f) ClipGuide(dt, clipW * ClipStrength(), wnMax);   // 0.18.0: turns the trunk and draws the hips the clip's way
+        if (clipW > 0f) ClipGuide(dt, clipW * ClipStrength(), wnMax);   // 0.20.0: turns the trunk and draws the hips the clip's way
         if (clipW < 0.5f) PullHands(dt);
         if (_throesTo > 0f && _t >= _throesFrom && _t < _throesTo) Twitch();
         if (_knock && hurt > 0.3f && _sitW < 0.1f && _roll != 1 && Plugin.KnockdownWrithe.Value) Writhe(bodyRight);
@@ -1459,7 +1459,7 @@ internal sealed partial class DeathMotion : MonoBehaviour
     {
         Vector3 under = new Vector3(pelvis.position.x, _groundY, pelvis.position.z);
         _standMoved += vH.magnitude * dt;
-        // 0.18.0 (user: "deaths where they take steps dont seem to work"): the pelvis push dragged both feet along the floor, so no foot
+        // 0.20.0 (user: "deaths where they take steps dont seem to work"): the pelvis push dragged both feet along the floor, so no foot
         // ever fell behind and nothing stepped. The standing foot is planted (held where it touched down, up to about what floor grip
         // could hold), so the body tips over it and has to step.
         if (_stepLeg != 0) Plant(ref _plantL, ref _plantedL, _ankleL, _bodies[_calfL].Rb, support);
@@ -1520,7 +1520,7 @@ internal sealed partial class DeathMotion : MonoBehaviour
         calf.AddForceAtPosition(Vector3.ClampMagnitude(f, calf.mass * 70f) * support, pos);
     }
 
-    // 0.18.0 (user: "they still dont actually take any steps"; log: 2-4 catch steps counted, bodies slid 0.5-4.5 m): the leg muscles
+    // 0.20.0 (user: "they still dont actually take any steps"; log: 2-4 catch steps counted, bodies slid 0.5-4.5 m): the leg muscles
     // held thigh and calf at the pose of the moment of the hit (the stiffest muscles in the body) and the ankle pull alone could not
     // beat them, so the foot dragged. The swinging leg's own muscles aim it: two-bone IK from the hip to the step goal, knee
     // forward, stronger than the hold, like a reaching arm.
@@ -1719,7 +1719,7 @@ internal sealed partial class DeathMotion : MonoBehaviour
 
     private static float Smooth(float a, float b, float t) => b <= a ? (t >= b ? 1f : 0f) : Mathf.SmoothStep(0f, 1f, (t - a) / (b - a));
 
-    // 0.12.0 (user: "more consistent"): Consistency pulls every random range toward its middle. 0.18.0: one Variety per section
+    // 0.12.0 (user: "more consistent"): Consistency pulls every random range toward its middle. 0.20.0: one Variety per section
     // (consistency = 1 - that section's Variety): a knockdown uses 4. Knockdowns', a death 2. Dying's
     private float Cons => 1f - Mathf.Clamp01((_knock ? Plugin.KnockdownVariety : Plugin.DyingVariety).Value);
     private float Rand(float a, float b)

@@ -20,7 +20,7 @@ namespace EuphoriaStylePhysics;
 // Project Real Limbs (Project Zomboid) by deewindler, https://www.youtube.com/@DwindleDwindle (CC BY-NC 4.0); none of its
 // code is used here (its Java solver has no Unity counterpart).
 [BepInDependency("com.fika.core", BepInDependency.DependencyFlags.SoftDependency)]
-[BepInPlugin("amos.euphoriastylephysics", "Euphoria Style Physics", "0.18.0")]
+[BepInPlugin("amos.euphoriastylephysics", "Euphoria Style Physics", "0.20.0")]
 public sealed class Plugin : BaseUnityPlugin
 {
     internal static ManualLogSource Log;
@@ -34,7 +34,7 @@ public sealed class Plugin : BaseUnityPlugin
     internal static ConfigEntry<int> PresetRevision;
     private static bool _patchFailed;
     internal static bool IsOn => Enabled.Value && !_patchFailed;   // the master switch, and patching worked this session
-    internal static ConfigEntry<float> DyingVariety, KnockdownVariety;   // 0.18.0: one Variety per section, in place of Consistency
+    internal static ConfigEntry<float> DyingVariety, KnockdownVariety;   // 0.20.0: one Variety per section, in place of Consistency
     internal static ConfigEntry<bool> RealTimePhysics;
 
     internal static ConfigEntry<bool> DeathEnabled;
@@ -108,7 +108,7 @@ public sealed class Plugin : BaseUnityPlugin
     {
         Log = Logger;
         // 0.9.0 (user: every main feature toggleable with ease): the main switches all sit in "1. General", first in F12
-        // 0.18.0 (user: settings regrouped, feature switches): one section per feature with its main switch first; the main switches
+        // 0.20.0 (user: settings regrouped, feature switches): one section per feature with its main switch first; the main switches
         // also side by side in 1. General (LinkFeatureSwitches)
         const string g = "1. General", d = "2. Dying", f = "3. Hit flinch", k = "4. Knockdowns", c = "5. Corpses";
         Enabled = Config.Bind(g, "Enabled", true, "Master switch.");
@@ -145,7 +145,7 @@ public sealed class Plugin : BaseUnityPlugin
         KnockdownEnabled = Config.Bind(k, "Knockdowns", false, new ConfigDescription(
             "MAIN SWITCH, EXPERIMENTAL (gameplay: the bot cannot shoot while down). A bot hit hard goes down on its own ragdoll and gets back up. "
             + "Only where the bots' AI runs. Details below.", null, new ConfigurationManagerAttributes { Order = 1000 }));
-        // 0.18.0 (user: "variety"): one Variety per section that has random ranges, right under its main switch (0 = alike, 1 = most varied)
+        // 0.20.0 (user: "variety"): one Variety per section that has random ranges, right under its main switch (0 = alike, 1 = most varied)
         DyingVariety = Config.Bind(d, "Variety", 0.5f,
             new ConfigDescription("How different deaths are from each other. 0 = the same hit gives the same death (dying time in the middle of its range, "
                 + "hand to the wound and arms out nearly always), 1 = every random range used fully. Your chance settings (drop dead, lying wounded, "
@@ -180,7 +180,7 @@ public sealed class Plugin : BaseUnityPlugin
             new ConfigDescription("How hard a body on the ground twitches (0: never).", new AcceptableValueRange<float>(0f, 2f)));
         ThroesNoneChance = Config.Bind(d, "No twitch chance", 0.7f,
             new ConfigDescription("Share of deaths with no twitches at all.", new AcceptableValueRange<float>(0f, 1f)));
-        // 0.18.0 (user: "we had a toggle for weapon being dropped during ragdoll"): as HollywoodFX does
+        // 0.20.0 (user: "we had a toggle for weapon being dropped during ragdoll"): as HollywoodFX does
         DropWeapon = Config.Bind(d, "Drop weapon on death", true,
             "A long gun's strap comes off and it falls from the body; a pistol, knife or grenade in the hand is hidden "
             + "(both as HollywoodFX does). Still looted from the body. Left to HollywoodFX when its own weapon drop is on.");
@@ -194,7 +194,7 @@ public sealed class Plugin : BaseUnityPlugin
             new ConfigDescription("How close a corpse has to be to you to stay or become a ragdoll again.", new AcceptableValueRange<float>(2f, 50f)));
         CorpseWakeMax = Config.Bind(c, "Most physical corpses at once", 10,
             new ConfigDescription("Cap on corpses kept or made physical near you (performance).", new AcceptableValueRange<int>(1, 40)));
-        // 0.18.0 (user: "i dont want frozen ragdolls at all if possible")
+        // 0.20.0 (user: "i dont want frozen ragdolls at all if possible")
         CorpseNeverFreeze = Config.Bind(c, "Never freeze corpses", false,
             "Every corpse stays a ragdoll for the whole raid, however far away (distance and cap above ignored). A settled body "
             + "sleeps in the physics engine and costs little until something touches it; raids with very many bodies use more "
@@ -224,7 +224,7 @@ public sealed class Plugin : BaseUnityPlugin
         CorpseHits = Config.Bind(d, "Rounds push dying bodies", true,
             "Our own push: a round into a body that is dying or still falling pushes the part it hits. Left to RealTargets when its "
             + "Impacts push corpses (so a body is not pushed twice). Either way a dying body gives way to the hit for a moment.");
-        // 0.18.0 (user: "lets try the floor clips"): MotionBricks clips made from EFT's own poses, lying wounded
+        // 0.20.0 (user: "lets try the floor clips"): MotionBricks clips made from EFT's own poses, lying wounded
         FloorClips = Config.Bind(d, "Floor clips", true,
             "A body lying wounded plays a floor clip for the way it landed instead of the curl: on its back it curls up, rolls, "
             + "sits up holding the wound, reaches out, pleads, takes a last breath, or tries to push itself up; face down it crawls "
@@ -299,7 +299,7 @@ public sealed class Plugin : BaseUnityPlugin
 
         LinkFeatureSwitches();     // first: bound before the clean-up, or it removed (and rewrote) them every launch
         CarryOverMovedSettings();
-        ClipLibrary.Load(System.IO.Path.GetDirectoryName(Info.Location));   // 0.18.0: MotionBricks floor clips
+        ClipLibrary.Load(System.IO.Path.GetDirectoryName(Info.Location));   // 0.20.0: MotionBricks floor clips
 
         try
         {
@@ -342,7 +342,7 @@ public sealed class Plugin : BaseUnityPlugin
             // corpses too)
             h.Patch(AccessTools.Method(typeof(CorpseRagdoll), nameof(CorpseRagdoll.StopRigidbody)),
                 prefix: new HarmonyMethod(typeof(Plugin), nameof(StopRigidbodyPrefix)));
-            // 0.18.0: weapon drop on death (on CorpseRagdoll, so Fika's observed corpses too)
+            // 0.20.0: weapon drop on death (on CorpseRagdoll, so Fika's observed corpses too)
             h.Patch(AccessTools.Method(typeof(CorpseRagdoll), nameof(CorpseRagdoll.AttachWeapon)),
                 postfix: new HarmonyMethod(typeof(Plugin), nameof(AttachWeaponPostfix)));
             // Fika's ObservedPlayer (bots and players on a client) may override ShotReactions without calling it; patch the
@@ -351,7 +351,7 @@ public sealed class Plugin : BaseUnityPlugin
             var obsMethod = observed == null ? null : AccessTools.DeclaredMethod(observed, nameof(Player.ShotReactions));
             if (obsMethod != null)
                 h.Patch(obsMethod, postfix: new HarmonyMethod(typeof(Plugin), nameof(ShotReactionsPostfix)));
-            Log.LogInfo($"[EuphoriaStylePhysics] 0.18.0 loaded; toggle key {ToggleKey.Value}; patches on: Corpse.TryToCreateRagdoll, sleep hierarchy, Physics.Simulate, BodyPartCollider.ApplyHit, Player.BodyUpdate/MovementUpdate, FirearmController.SetTriggerPressed, BotSteering.ManualFixedUpdate, ExplosionSharedMethods.Explosion, Player.ShotReactions, CorpseRagdoll.StopRigidbody/AttachWeapon, loot search log" +
+            Log.LogInfo($"[EuphoriaStylePhysics] 0.20.0 loaded; toggle key {ToggleKey.Value}; patches on: Corpse.TryToCreateRagdoll, sleep hierarchy, Physics.Simulate, BodyPartCollider.ApplyHit, Player.BodyUpdate/MovementUpdate, FirearmController.SetTriggerPressed, BotSteering.ManualFixedUpdate, ExplosionSharedMethods.Explosion, Player.ShotReactions, CorpseRagdoll.StopRigidbody/AttachWeapon, loot search log" +
                         $"{(obsMethod != null ? " + ObservedPlayer.ShotReactions" : "")}; Fika {(observed != null ? "present" : "absent")}");
         }
         catch (Exception e)
@@ -465,7 +465,7 @@ public sealed class Plugin : BaseUnityPlugin
     // (a scan of the whole scene) on every loot interaction. Corpses are remembered as they are made.
     private static readonly System.Collections.Generic.List<Corpse> KnownCorpses = new System.Collections.Generic.List<Corpse>();
 
-    // 0.18.0 (user: "feature switches", "settings regrouped"): every feature's main switch twice: side by side in 1. General, and at the
+    // 0.20.0 (user: "feature switches", "settings regrouped"): every feature's main switch twice: side by side in 1. General, and at the
     // top of its own section. The two are one switch: flipping either flips the other (the one in the feature's section wins at
     // start, so a preset or old cfg value holds).
     private void LinkFeatureSwitches()
@@ -492,7 +492,7 @@ public sealed class Plugin : BaseUnityPlugin
         }
     }
 
-    // 0.18.0: settings moved to new sections keep their value. BepInEx keeps a line it no longer reads as an orphan; one with the same
+    // 0.20.0: settings moved to new sections keep their value. BepInEx keeps a line it no longer reads as an orphan; one with the same
     // name as a setting now bound in another section is that setting's old value. Lines of settings this version no longer has
     // (the stagger's) are dropped from the file. Runs after every setting is bound.
     private void CarryOverMovedSettings()
@@ -664,7 +664,7 @@ public sealed class Plugin : BaseUnityPlugin
         catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] blast position not recorded: {e.Message}"); }
     }
 
-    // 0.18.0: EFT joins the hand item to the corpse: SpringJoint strap (long guns) or FixedJoint to the forearm (pistol, knife,
+    // 0.20.0: EFT joins the hand item to the corpse: SpringJoint strap (long guns) or FixedJoint to the forearm (pistol, knife,
     // grenade; Player.DropItemDead). Same as HollywoodFX: strap off (falls), hand item hidden. When another mod (HollywoodFX's
     // "Drop Weapon on Death") also patches AttachWeapon, it is left to that mod.
     private static int _otherWeaponDrop = -1;
@@ -855,7 +855,7 @@ public sealed class Plugin : BaseUnityPlugin
     }
 }
 
-// 0.18.0: read by BepInEx's Configuration Manager (F12) by name: main switches first in their section, a display name for the copies
+// 0.20.0: read by BepInEx's Configuration Manager (F12) by name: main switches first in their section, a display name for the copies
 internal sealed class ConfigurationManagerAttributes
 {
     public int? Order;

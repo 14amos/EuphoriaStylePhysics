@@ -4,7 +4,7 @@
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <AssemblyName>EuphoriaStylePhysics</AssemblyName>
-    <Version>0.18.0</Version>
+    <Version>0.20.0</Version>
     <Deterministic>true</Deterministic>
     <DebugType>none</DebugType>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
