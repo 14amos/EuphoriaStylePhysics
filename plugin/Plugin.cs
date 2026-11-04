@@ -46,7 +46,7 @@ public sealed class Plugin : BaseUnityPlugin
     internal static ConfigEntry<float> MuscleScale;
     internal static ConfigEntry<float> StumbleScale;
     internal static ConfigEntry<bool> HandOnWound;
-    internal static ConfigEntry<bool> Stepping, PlantFeet, DieLyingOrInAir;   // 0.18.0: switches for the two new death features
+    internal static ConfigEntry<bool> Stepping;
     internal static ConfigEntry<float> Throes;
     internal static ConfigEntry<float> ThroesNoneChance;
     internal static ConfigEntry<bool> ExplosionsVanilla;
@@ -176,14 +176,6 @@ public sealed class Plugin : BaseUnityPlugin
             new ConfigDescription("How far a dying body stumbles the way the round pushed it.", new AcceptableValueRange<float>(0f, 3f)));
         HandOnWound = Config.Bind(d, "Hand on the wound", true, "A hand goes to a torso or leg wound while dying.");
         Stepping = Config.Bind(d, "Catch steps", true, "A stumbling body steps to catch itself.");
-        // 0.18.0 (user: "you added all those but didnt give them toggles"): the two new death features each get a switch
-        PlantFeet = Config.Bind(d, "Plant feet in steps", true,
-            "On: the standing foot holds where it touched down and the stepping leg's own muscles aim the step, so a stumbling body "
-            + "tips over its feet and steps. Off: the 0.17 steps (the foot is pulled along, both feet can slide). Needs Catch steps.");
-        DieLyingOrInAir = Config.Bind(d, "Deaths lying down or in the air", true,
-            "On: a body killed while lying down holds its pose a moment and goes limp (lying wounded can follow), one killed mid-jump "
-            + "or falling puts its arms out and goes limp when it lands, and fall damage folds the legs. Off: those deaths use "
-            + "EFT's own ragdoll, as before 0.18.0.");
         Throes = Config.Bind(d, "Last twitches", 0.75f,
             new ConfigDescription("How hard a body on the ground twitches (0: never).", new AcceptableValueRange<float>(0f, 2f)));
         ThroesNoneChance = Config.Bind(d, "No twitch chance", 0.7f,
@@ -301,8 +293,8 @@ public sealed class Plugin : BaseUnityPlugin
         KnockdownRiseTime = Config.Bind(k, "Getting up time (s)", 0.9f,
             new ConfigDescription("Blend from lying straight to standing (when not getting up through prone).", new AcceptableValueRange<float>(0.2f, 4f)));
 
-        LinkFeatureSwitches();     // first: bound before the clean-up, or it removed (and rewrote) them every launch
         CarryOverMovedSettings();
+        LinkFeatureSwitches();
         ClipLibrary.Load(System.IO.Path.GetDirectoryName(Info.Location));   // 0.18.0: MotionBricks floor clips
 
         try
