@@ -185,6 +185,11 @@ internal sealed class DeathMotion : MonoBehaviour
     {
         if (_errors > 20) return;
         string who = player.Profile?.Nickname ?? player.ProfileId;
+        if (CorpseLeases.IsLeased(corpse))   // 2026-11-04: another mod already holds this corpse (CorpseLeaseV1)
+        {
+            Plugin.Log.LogInfo($"[EuphoriaStylePhysics] {who} dies without our motion: its corpse is leased by another mod");
+            return;
+        }
         int dyingNow = 0;
         foreach (var a in Active) if (a != null && !a._knock) dyingNow++;   // 0.17.5: knockdowns do not use up the cap
         if (dyingNow >= Plugin.MaxDying.Value)
