@@ -293,8 +293,8 @@ public sealed class Plugin : BaseUnityPlugin
         KnockdownRiseTime = Config.Bind(k, "Getting up time (s)", 0.9f,
             new ConfigDescription("Blend from lying straight to standing (when not getting up through prone).", new AcceptableValueRange<float>(0.2f, 4f)));
 
+        LinkFeatureSwitches();     // first: bound before the clean-up, or it removed (and rewrote) them every launch
         CarryOverMovedSettings();
-        LinkFeatureSwitches();
         ClipLibrary.Load(System.IO.Path.GetDirectoryName(Info.Location));   // 0.18.0: MotionBricks floor clips
 
         try
