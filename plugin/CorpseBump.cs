@@ -41,8 +41,7 @@ internal static class CorpseBump
         for (int i = 0; i < n; i++)
         {
             var rb = Hits[i] != null ? Hits[i].attachedRigidbody : null;
-            if (rb == null || rb.isKinematic || !Done.Add(rb) || DeathMotion.IsDriven(rb) || Plugin.DroppedWeapons.Contains(rb)
-                || CorpseLeases.IsLeased(CorpseWake.CorpseOfBody(rb))) continue;   // 2026-11-04: not a body another mod holds   // 2026-11-03: not the dropped gun   // frozen, or still dying on our muscles
+            if (rb == null || rb.isKinematic || !Done.Add(rb) || DeathMotion.IsDriven(rb)) continue;   // frozen, or still dying on our muscles
             Vector3 side = Vector3.ProjectOnPlane(rb.worldCenterOfMass - pos, Vector3.up);
             side = Vector3.ProjectOnPlane(side, dir);
             Vector3 push = side.sqrMagnitude > 1e-4f ? (dir + 0.4f * side.normalized).normalized : dir;
