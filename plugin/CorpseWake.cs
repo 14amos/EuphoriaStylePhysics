@@ -40,7 +40,11 @@ internal static class CorpseWake
         SmoothCollisions(corpse.Ragdoll);
         var orig = corpse.Ragdoll._checkCorpseIsStill;
         if (orig != null)
-            corpse.Ragdoll._checkCorpseIsStill = (sleeping, t) => orig(sleeping, t) && !(Plugin.IsOn && Plugin.CorpseWakeOn.Value && e.Near && !e.Failed);
+            // 2026-11-03 (issues with Smoothie only): Smoothie's "Corpses stop moving after (s)" (5 s) reports every corpse still, so
+            // EFT froze bodies we were still moving (dying, lying wounded) and rounds no longer pushed them. Smoothie exempts Rupture;
+            // a corpse our motion drives is never still, whatever reports it.
+            corpse.Ragdoll._checkCorpseIsStill = (sleeping, t) => orig(sleeping, t) && !CorpseLeases.IsLeased(corpse) &&   // leased: EFT's answer
+                !(Plugin.IsOn && (Plugin.CorpseWakeOn.Value && e.Near && !e.Failed || corpse != null && corpse.GetComponent<DeathMotion>() != null));
     }
 
     private static Vector3 BodyPos(Entry e)
@@ -63,7 +67,31 @@ internal static class CorpseWake
             c = rb.GetComponentInParent<Corpse>();
             CorpseOf[rb] = c;
         }
-        return c != null && ByCorpse.TryGetValue(c, out var e) && e.Near && !e.Failed && Plugin.IsOn && Plugin.CorpseWakeOn.Value;
+        return c != null && ByCorpse.TryGetValue(c, out var e) && e.Near && !e.Failed && !CorpseLeases.IsLeased(c) && Plugin.IsOn && Plugin.CorpseWakeOn.Value;
+    }
+
+    // the corpse a body part belongs to (cached; null for a part of no corpse)
+    internal static Corpse CorpseOfBody(Rigidbody rb)
+    {
+        if (rb == null) return null;
+        if (!CorpseOf.TryGetValue(rb, out var c) || c == null)
+        {
+            if (CorpseOf.Count > 4096) CorpseOf.Clear();
+            c = rb.GetComponentInParent<Corpse>();
+            CorpseOf[rb] = c;
+        }
+        return c;
+    }
+
+    internal static bool Knows(Corpse corpse) => corpse != null && ByCorpse.ContainsKey(corpse);
+
+    // leased or given back (CorpseLeases): not woken by us any more, so we never freeze it; decided again on the next tick
+    internal static void Forget(Corpse corpse)
+    {
+        if (corpse == null || !ByCorpse.TryGetValue(corpse, out var e)) return;
+        e.WokenByUs = false;
+        e.Near = false;
+        e.Pelvis = null;   // a carried or rebuilt body has new parts: find the pelvis again
     }
     private static readonly Dictionary<Rigidbody, Corpse> CorpseOf = new Dictionary<Rigidbody, Corpse>();
 
@@ -90,6 +118,7 @@ internal static class CorpseWake
                     continue;
                 }
                 if (e.Failed) continue;
+                if (CorpseLeases.IsLeased(e.Corpse)) { e.Near = false; continue; }   // another mod has it (CorpseLeaseV1)
                 try { TickOne(e, on, always, r, at); }
                 catch (Exception ex)
                 {
@@ -214,7 +243,7 @@ internal static class CorpseWake
         try
         {
             var c = __instance.GetComponentInParent<Corpse>();
-            if (c != null && ByCorpse.TryGetValue(c, out var e) && e.WokenByUs) Freeze(e);
+            if (c != null && ByCorpse.TryGetValue(c, out var e) && e.WokenByUs && !CorpseLeases.IsLeased(c)) Freeze(e);
         }
         catch (Exception ex) { Plugin.Log.LogWarning($"[EuphoriaStylePhysics] corpse freeze before joint removal failed: {ex.Message}"); }
     }
