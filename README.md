@@ -29,7 +29,9 @@ On by default (visual, how bodies look):
 
 - **Dying with muscles:** a body killed on its feet stumbles the way the round pushed it, a hand goes to the wound, the
   knees give, then it drops (sometimes with a twitch). Headshots: the legs go at once, or head first, then the body.
-- Running deaths tumble forward with their run; crouched deaths slump; falling bodies put their arms out.
+- Running deaths tumble forward with their run; crouched deaths slump; falling bodies put their arms out. Bots killed
+  lying prone or in mid-air die on our physics too.
+- A dying bot lets go of its weapon.
 - Knife deaths: both hands go to the wound and the body folds onto its knees.
 - A dying body near a wall or low cover staggers to it, puts a hand on it and slides down it.
 - Some bodies lie hurt for a few seconds: curled up, a hand on the wound or reaching toward the shooter.
@@ -38,7 +40,7 @@ On by default (visual, how bodies look):
   hit reaction. Visual only: AI aim and hitboxes never see it, and never your own body.
 - **Explosion flinch:** survivors recoil away from a blast.
 - **Corpses stay physical near you:** EFT freezes a corpse once it lies still; within 12 m of you it stays a ragdoll, so
-  rounds, blasts and other bodies still move it. Walk away and EFT freezes it again (local only, not synced).
+  rounds, blasts and other bodies still move it. Walk away and EFT freezes it again (local only, not synced). "Never freeze corpses" (off) keeps them all physical.
 - **Smooth body collisions:** bodies roll down stairs instead of sinking into the steps and popping out, and a body
   lying on stairs can still be searched from above.
 
@@ -62,8 +64,8 @@ Log: `BepInEx/LogOutput.log`, lines starting with `[EuphoriaStylePhysics]`. Plea
 
 ## Other mods
 
-- **RealTargets:** works together. Its bullet push (Impacts) moves dead and dying bodies, and a dying body gives way to
-  it for a moment; our own round push is then left out (so nothing is pushed twice). Its Blast injuries throws grenade kills within 6 m; our blast throw then leaves those bodies to it. If
+- **RealTargets:** works together. Its bullet push (Impacts) moves dead bodies and dying bodies once they are going down
+  (not while still on their feet); our own round push is then left out (so nothing is pushed twice). Its Blast injuries throws grenade kills within 6 m; our blast throw then leaves those bodies to it. If
   bodies fly too far from bullets, lower RealTargets' Impacts > Push strength.
 - **HollywoodFX:** keep its "08. Ragdoll Effects" off. On, it pushes every shot body hard and changes every body
   part's weight, drag and bounce, which fights this mod. Its gore, blood and explosion effects are fine.
