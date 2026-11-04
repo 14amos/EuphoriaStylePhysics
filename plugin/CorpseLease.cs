@@ -3,7 +3,7 @@ using EFT.Interactive;
 
 namespace EuphoriaStylePhysics
 {
-    // 2026-11-04 (TraumaCore's author, via the user: dragging a body fought "Corpses stay physical near you" and the dying motion):
+    // 2026-11-04 (KMA - Keep Me Alive's author, via the user: dragging a body fought "Corpses stay physical near you" and the dying motion):
     // another mod can take a corpse for a while. While it is leased we leave it alone: no dying motion on it, CorpseWake does not
     // wake, freeze or rebuild it, the walk push skips it, and EFT's own "is it still" answer stands. Main thread, local only.
     internal static class CorpseLeases
