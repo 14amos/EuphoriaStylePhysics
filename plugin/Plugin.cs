@@ -20,7 +20,7 @@ namespace EuphoriaStylePhysics;
 // Project Real Limbs (Project Zomboid) by deewindler, https://www.youtube.com/@DwindleDwindle (CC BY-NC 4.0); none of its
 // code is used here (its Java solver has no Unity counterpart).
 [BepInDependency("com.fika.core", BepInDependency.DependencyFlags.SoftDependency)]
-[BepInPlugin("amos.euphoriastylephysics", "Euphoria Style Physics", "0.20.0")]
+[BepInPlugin("amos.euphoriastylephysics", "Euphoria Style Physics", "0.20.1")]
 public sealed class Plugin : BaseUnityPlugin
 {
     internal static ManualLogSource Log;
@@ -344,7 +344,7 @@ public sealed class Plugin : BaseUnityPlugin
             var obsMethod = observed == null ? null : AccessTools.DeclaredMethod(observed, nameof(Player.ShotReactions));
             if (obsMethod != null)
                 h.Patch(obsMethod, postfix: new HarmonyMethod(typeof(Plugin), nameof(ShotReactionsPostfix)));
-            Log.LogInfo($"[EuphoriaStylePhysics] 0.20.0 loaded; toggle key {ToggleKey.Value}; patches on: Corpse.TryToCreateRagdoll, sleep hierarchy, Physics.Simulate, BodyPartCollider.ApplyHit, Player.BodyUpdate/MovementUpdate, FirearmController.SetTriggerPressed, BotSteering.ManualFixedUpdate, ExplosionSharedMethods.Explosion, Player.ShotReactions, CorpseRagdoll.StopRigidbody/AttachWeapon, loot search log" +
+            Log.LogInfo($"[EuphoriaStylePhysics] 0.20.1 loaded; toggle key {ToggleKey.Value}; patches on: Corpse.TryToCreateRagdoll, sleep hierarchy, Physics.Simulate, BodyPartCollider.ApplyHit, Player.BodyUpdate/MovementUpdate, FirearmController.SetTriggerPressed, BotSteering.ManualFixedUpdate, ExplosionSharedMethods.Explosion, Player.ShotReactions, CorpseRagdoll.StopRigidbody/AttachWeapon, loot search log" +
                         $"{(obsMethod != null ? " + ObservedPlayer.ShotReactions" : "")}; Fika {(observed != null ? "present" : "absent")}");
         }
         catch (Exception e)

@@ -23,6 +23,7 @@ internal static class CorpseWake
         public bool WokenByUs;     // our dynamic bodies on a frozen corpse (we freeze them again)
         public bool Near;
         public Rigidbody Pelvis;   // 0.17.5: the body can lie metres from the corpse root
+        public bool Failed;        // 0.20.1: waking or rebuilding this corpse threw; left to EFT from then on
     }
 
     private static readonly List<Entry> Corpses = new List<Entry>();
@@ -39,7 +40,7 @@ internal static class CorpseWake
         SmoothCollisions(corpse.Ragdoll);
         var orig = corpse.Ragdoll._checkCorpseIsStill;
         if (orig != null)
-            corpse.Ragdoll._checkCorpseIsStill = (sleeping, t) => orig(sleeping, t) && !(Plugin.IsOn && Plugin.CorpseWakeOn.Value && e.Near);
+            corpse.Ragdoll._checkCorpseIsStill = (sleeping, t) => orig(sleeping, t) && !(Plugin.IsOn && Plugin.CorpseWakeOn.Value && e.Near && !e.Failed);
     }
 
     private static Vector3 BodyPos(Entry e)
@@ -62,7 +63,7 @@ internal static class CorpseWake
             c = rb.GetComponentInParent<Corpse>();
             CorpseOf[rb] = c;
         }
-        return c != null && ByCorpse.TryGetValue(c, out var e) && e.Near && Plugin.IsOn && Plugin.CorpseWakeOn.Value;
+        return c != null && ByCorpse.TryGetValue(c, out var e) && e.Near && !e.Failed && Plugin.IsOn && Plugin.CorpseWakeOn.Value;
     }
     private static readonly Dictionary<Rigidbody, Corpse> CorpseOf = new Dictionary<Rigidbody, Corpse>();
 
@@ -88,21 +89,17 @@ internal static class CorpseWake
                     Corpses.RemoveAt(i);
                     continue;
                 }
-                var rag = e.Corpse.Ragdoll;
-                e.Near = always || on && (BodyPos(e) - at).sqrMagnitude < r * r;   // 0.17.5: where the body lies, not where it died
-                if (e.WokenByUs)
+                if (e.Failed) continue;
+                try { TickOne(e, on, always, r, at); }
+                catch (Exception ex)
                 {
-                    // EFT's first cycle removes the bodies once the corpse is out of sight, awake or not: build them again next time
-                    if (AllRemoved(rag)) { e.WokenByUs = false; continue; }
-                    if (!e.Near) Freeze(e);
-                    else _awake++;
-                    continue;
+                    // 0.20.1 (user log: EFT's RigidbodySpawner.Create threw on one corpse's rebuild every tick, and after 21 errors
+                    // keeping corpses physical went off for the whole session): only that corpse is left to EFT now
+                    e.Failed = true;
+                    e.Near = false;
+                    e.WokenByUs = false;
+                    Plugin.Log.LogWarning($"[EuphoriaStylePhysics] corpse of {e.Name} could not be kept physical, left to EFT: {ex.GetType().Name}: {ex.Message}");
                 }
-                if (!rag._isPhysicsDone) { if (e.Near) _awake++; continue; }   // EFT's cycle still runs (kept going by the wrapper)
-                if (!e.Near || !always && _awake >= Plugin.CorpseWakeMax.Value) continue;
-                if (AllRemoved(rag)) Rebuild(e);
-                else Wake(e);
-                _awake++;
             }
         }
         catch (Exception ex)
@@ -110,6 +107,25 @@ internal static class CorpseWake
             _errors++;
             Plugin.Log.LogError($"[EuphoriaStylePhysics] corpse wake failed ({_errors}{(_errors > 20 ? ", off for this session" : "")}): {ex}");
         }
+    }
+
+    private static void TickOne(Entry e, bool on, bool always, float r, Vector3 at)
+    {
+        var rag = e.Corpse.Ragdoll;
+        e.Near = always || on && (BodyPos(e) - at).sqrMagnitude < r * r;   // 0.17.5: where the body lies, not where it died
+        if (e.WokenByUs)
+        {
+            // EFT's first cycle removes the bodies once the corpse is out of sight, awake or not: build them again next time
+            if (AllRemoved(rag)) { e.WokenByUs = false; return; }
+            if (!e.Near) Freeze(e);
+            else _awake++;
+            return;
+        }
+        if (!rag._isPhysicsDone) { if (e.Near) _awake++; return; }   // EFT's cycle still runs (kept going by the wrapper)
+        if (!e.Near || !always && _awake >= Plugin.CorpseWakeMax.Value) return;
+        if (AllRemoved(rag)) Rebuild(e);
+        else Wake(e);
+        _awake++;
     }
 
     // 0.17.4 (user clip: a body rolling down metal stairs jitters; logs: parts at 9-12 m/s): EFT runs corpses with Discrete
