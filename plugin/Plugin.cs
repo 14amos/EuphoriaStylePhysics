@@ -384,6 +384,7 @@ public sealed class Plugin : BaseUnityPlugin
         else Log.LogInfo("[EuphoriaStylePhysics] Fika not installed: no sync needed");
 
         Flinch.Install();
+        PatchInventoryWalker();
         // EFT's own explosion event (position, the explosive's max explosion distance), raised for grenades, mines and shells
         ExplosionSharedMethods.OnExplosion += OnExplosion;
     }
@@ -704,6 +705,44 @@ public sealed class Plugin : BaseUnityPlugin
             Log.LogInfo($"[EuphoriaStylePhysics] corpse of {CorpseName(__instance)}: weapon {weaponRigidbody.name} {(spring != null ? "dropped (strap removed)" : "hidden (held in hand)")}");
         }
         catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] weapon drop failed: {e.Message}"); }
+    }
+
+    // 0.21.0 (user: "now you cant loot them when you push them away from where they died"; log: Inventory Walker "Walked 4.8 m from
+    // the loot (range 3.0 m); closing it" with the body 1.2 m away): Inventory Walker measures its loot range from the corpse's root,
+    // where the bot died, not from where the body lies now. Its anchor for a corpse becomes the body's pelvis (it re-reads it every frame).
+    private void PatchInventoryWalker()
+    {
+        if (!BepInEx.Bootstrap.Chainloader.PluginInfos.ContainsKey("com.mybutthasarash.inventorywalker")) return;
+        try
+        {
+            var lootRange = AccessTools.TypeByName("InventoryWalker.LootRange");
+            var prefix = lootRange == null ? null : AccessTools.Method(lootRange, "Prefix");
+            _iwAnchor = lootRange == null ? null : AccessTools.Field(lootRange, "_anchor");
+            _iwAnchorPos = lootRange == null ? null : AccessTools.Field(lootRange, "_anchorPosition");
+            if (prefix == null || _iwAnchor == null || _iwAnchorPos == null)
+            {
+                Log.LogWarning("[EuphoriaStylePhysics] Inventory Walker found, but not the parts we expected: loot range still measured from where a body died");
+                return;
+            }
+            new Harmony("amos.euphoriastylephysics.inventorywalker").Patch(prefix, postfix: new HarmonyMethod(typeof(Plugin), nameof(InventoryWalkerPostfix)));
+            Log.LogInfo("[EuphoriaStylePhysics] Inventory Walker: loot range on a body measured from where the body lies");
+        }
+        catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] Inventory Walker patch failed: {e.Message}"); }
+    }
+    private static System.Reflection.FieldInfo _iwAnchor, _iwAnchorPos, _corpsePelvis;
+    private static void InventoryWalkerPostfix()
+    {
+        try
+        {
+            if (!(_iwAnchor.GetValue(null) is Transform anchor) || anchor == null) return;
+            var corpse = anchor.GetComponent<Corpse>();
+            if (corpse == null) return;
+            _corpsePelvis ??= AccessTools.Field(typeof(Corpse), "_pelvis");
+            if (!(_corpsePelvis?.GetValue(corpse) is Transform pelvis) || pelvis == null) return;
+            _iwAnchor.SetValue(null, pelvis);
+            _iwAnchorPos.SetValue(null, pelvis.position);
+        }
+        catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] Inventory Walker anchor: {e.Message}"); }
     }
 
     private static string CorpseName(CorpseRagdoll rag)
