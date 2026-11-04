@@ -49,7 +49,7 @@ public sealed class Plugin : BaseUnityPlugin
     internal static ConfigEntry<bool> Stepping;
     internal static ConfigEntry<float> Throes;
     internal static ConfigEntry<float> ThroesNoneChance;
-    internal static ConfigEntry<bool> ExplosionsVanilla;
+    internal static ConfigEntry<bool> ExplosionsVanilla, DropWeapon;
     internal static ConfigEntry<bool> RunTumble;
     internal static ConfigEntry<bool> GroundBrace;
     internal static ConfigEntry<bool> WallBrace;
@@ -180,6 +180,10 @@ public sealed class Plugin : BaseUnityPlugin
             new ConfigDescription("How hard a body on the ground twitches (0: never).", new AcceptableValueRange<float>(0f, 2f)));
         ThroesNoneChance = Config.Bind(d, "No twitch chance", 0.7f,
             new ConfigDescription("Share of deaths with no twitches at all.", new AcceptableValueRange<float>(0f, 1f)));
+        // 0.18.0 (user: "we had a toggle for weapon being dropped during ragdoll"): as HollywoodFX does
+        DropWeapon = Config.Bind(d, "Drop weapon on death", true,
+            "A long gun's strap comes off and it falls from the body; a pistol, knife or grenade in the hand is hidden "
+            + "(both as HollywoodFX does). Still looted from the body. Left to HollywoodFX when its own weapon drop is on.");
         ExplosionsVanilla = Config.Bind(d, "Explosions use EFT ragdoll", false,
             "On: grenades, mines, artillery and the like kill with EFT's own ragdoll. Off: the blast throw below.");
         BlastThrow = Config.Bind(d, "Blast throw", true,
@@ -338,13 +342,16 @@ public sealed class Plugin : BaseUnityPlugin
             // corpses too)
             h.Patch(AccessTools.Method(typeof(CorpseRagdoll), nameof(CorpseRagdoll.StopRigidbody)),
                 prefix: new HarmonyMethod(typeof(Plugin), nameof(StopRigidbodyPrefix)));
+            // 0.18.0: weapon drop on death (on CorpseRagdoll, so Fika's observed corpses too)
+            h.Patch(AccessTools.Method(typeof(CorpseRagdoll), nameof(CorpseRagdoll.AttachWeapon)),
+                postfix: new HarmonyMethod(typeof(Plugin), nameof(AttachWeaponPostfix)));
             // Fika's ObservedPlayer (bots and players on a client) may override ShotReactions without calling it; patch the
             // override too when it exists (a patch on the base method does not cover an override).
             var observed = AccessTools.TypeByName("Fika.Core.Main.Players.ObservedPlayer");
             var obsMethod = observed == null ? null : AccessTools.DeclaredMethod(observed, nameof(Player.ShotReactions));
             if (obsMethod != null)
                 h.Patch(obsMethod, postfix: new HarmonyMethod(typeof(Plugin), nameof(ShotReactionsPostfix)));
-            Log.LogInfo($"[EuphoriaStylePhysics] 0.18.0 loaded; toggle key {ToggleKey.Value}; patches on: Corpse.TryToCreateRagdoll, sleep hierarchy, Physics.Simulate, BodyPartCollider.ApplyHit, Player.BodyUpdate/MovementUpdate, FirearmController.SetTriggerPressed, BotSteering.ManualFixedUpdate, ExplosionSharedMethods.Explosion, Player.ShotReactions, CorpseRagdoll.StopRigidbody, loot search log" +
+            Log.LogInfo($"[EuphoriaStylePhysics] 0.18.0 loaded; toggle key {ToggleKey.Value}; patches on: Corpse.TryToCreateRagdoll, sleep hierarchy, Physics.Simulate, BodyPartCollider.ApplyHit, Player.BodyUpdate/MovementUpdate, FirearmController.SetTriggerPressed, BotSteering.ManualFixedUpdate, ExplosionSharedMethods.Explosion, Player.ShotReactions, CorpseRagdoll.StopRigidbody/AttachWeapon, loot search log" +
                         $"{(obsMethod != null ? " + ObservedPlayer.ShotReactions" : "")}; Fika {(observed != null ? "present" : "absent")}");
         }
         catch (Exception e)
@@ -655,6 +662,34 @@ public sealed class Plugin : BaseUnityPlugin
     {
         try { DeathMotion.RecordBlast(explosionPosition, grenadeItem != null ? grenadeItem.MaxExplosionDistance : 5f, grenadeItem != null); }
         catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] blast position not recorded: {e.Message}"); }
+    }
+
+    // 0.18.0: EFT joins the hand item to the corpse: SpringJoint strap (long guns) or FixedJoint to the forearm (pistol, knife,
+    // grenade; Player.DropItemDead). Same as HollywoodFX: strap off (falls), hand item hidden. When another mod (HollywoodFX's
+    // "Drop Weapon on Death") also patches AttachWeapon, it is left to that mod.
+    private static int _otherWeaponDrop = -1;
+    private static void AttachWeaponPostfix(CorpseRagdoll __instance, Rigidbody weaponRigidbody)
+    {
+        if (!IsOn || !DropWeapon.Value || weaponRigidbody == null) return;
+        try
+        {
+            if (_otherWeaponDrop < 0)
+            {
+                var info = Harmony.GetPatchInfo(AccessTools.Method(typeof(CorpseRagdoll), nameof(CorpseRagdoll.AttachWeapon)));
+                Patch other = null;
+                if (info != null) foreach (var p in info.Postfixes) if (p.owner != "amos.euphoriastylephysics") { other = p; break; }
+                _otherWeaponDrop = other != null ? 1 : 0;
+                Log.LogInfo(other != null
+                    ? $"[EuphoriaStylePhysics] weapon drop left to {other.owner} ({other.PatchMethod.DeclaringType?.FullName})"
+                    : "[EuphoriaStylePhysics] weapon drop on (no other mod drops weapons)");
+            }
+            if (_otherWeaponDrop == 1) return;
+            var spring = weaponRigidbody.GetComponent<SpringJoint>();
+            if (spring != null) UnityEngine.Object.Destroy(spring);
+            else weaponRigidbody.gameObject.SetActive(false);
+            Log.LogInfo($"[EuphoriaStylePhysics] corpse of {CorpseName(__instance)}: weapon {weaponRigidbody.name} {(spring != null ? "dropped (strap removed)" : "hidden (held in hand)")}");
+        }
+        catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] weapon drop failed: {e.Message}"); }
     }
 
     private static string CorpseName(CorpseRagdoll rag)
