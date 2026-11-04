@@ -23,6 +23,10 @@ internal sealed partial class DeathMotion
     private Vector3 _pelvisSegLocal, _chestSegLocal;   // the trunk's bones (pelvis to spine, chest to head), in their own frames
     // joint indices of the clip playing, mirror applied (the hot path looks nothing up by name)
     private int _jHips, _jSpine1, _jChest, _jNeck2, _jLFoot, _jRFoot;
+    // 0.20.0: the clip's and the body's trunk frames (hips: legs; chest: arms and head), so limbs follow the clip relative to the trunk
+    private int _jLLeg, _jRLeg, _jLArm, _jRArm;
+    private Quaternion _relPelvis = Quaternion.identity, _relChest = Quaternion.identity;
+    private float _relAt = -1f;
     private int _clipLogs;
     // 2026-11-03 (log: a running death 51 deg off in its first 0.25 s, right upper arm 112): every clip's frame 0 is EFT's standing
     // rifle pose, and a body that dies running (or lands any way at all) is not in it, while the clip took over within 0.12 s. Each
@@ -189,6 +193,8 @@ internal sealed partial class DeathMotion
         TrackReport();   // start this clip's tracking from nothing
         _jHips = J("Hips"); _jSpine1 = J("Spine1"); _jChest = J("Chest"); _jNeck2 = J("Neck2");
         _jLFoot = J("LeftFoot"); _jRFoot = J("RightFoot");
+        _jLLeg = J("LeftLeg"); _jRLeg = J("RightLeg"); _jLArm = J("LeftArm"); _jRArm = J("RightArm");
+        _relAt = -1f;
         _segA ??= new int[_bodies.Count];
         _segB ??= new int[_bodies.Count];
         for (int i = 0; i < _bodies.Count; i++)
@@ -238,7 +244,7 @@ internal sealed partial class DeathMotion
         {
             _segOff[i] = Quaternion.identity;
             if (_segA[i] < 0) continue;
-            Vector3 c0 = ClipDir(_segA[i], _segB[i], 0f), b0 = _bodies[i].Rb.rotation * _segLocal[i];
+            Vector3 c0 = ClipAim(i, 0f), b0 = _bodies[i].Rb.rotation * _segLocal[i];
             _segOff[i] = Quaternion.FromToRotation(c0, b0);
             float a = Vector3.Angle(c0, b0);
             offSum += a; offN++;
@@ -259,6 +265,45 @@ internal sealed partial class DeathMotion
     }
 
     // the muscle target of body i, swung so its bone points along the clip's
+    // 0.20.0 (user log: floor clips 22-73 deg off, worst where the trunk was off the clip's, e.g. writhe_curl spine 67): limb targets
+    // were the clip's bone directions in the world, which only fit a body whose trunk lies exactly as the clip's does. A body rolled
+    // partway or twisted had every limb aimed somewhere that does not fit it. Legs now follow the clip relative to its hips, arms and
+    // the head relative to its chest, carried onto the body's own pelvis and chest; the trunk keeps its weak guide (ClipGuide).
+    private static Quaternion TrunkFrame(Vector3 up, Vector3 left)
+    {
+        if (up.sqrMagnitude < 1e-8f) return Quaternion.identity;
+        up.Normalize();
+        left = Vector3.ProjectOnPlane(left, up);
+        if (left.sqrMagnitude < 1e-8f) return Quaternion.identity;
+        return Quaternion.LookRotation(Vector3.Cross(up, left.normalized), up);   // Unity: forward = up x left
+    }
+
+    private void ClipFrames(float t)
+    {
+        if (_relAt == t) return;
+        _relAt = t;
+        Quaternion clipHips = TrunkFrame(ClipPos(_jSpine1, t) - ClipPos(_jHips, t), ClipPos(_jLLeg, t) - ClipPos(_jRLeg, t));
+        Quaternion clipChest = TrunkFrame(ClipPos(_jNeck2, t) - ClipPos(_jChest, t), ClipPos(_jLArm, t) - ClipPos(_jRArm, t));
+        var pelvis = _bodies[_pelvis].Rb;
+        var chest = _bodies[_chest].Rb;
+        Quaternion bodyHips = TrunkFrame(pelvis.rotation * _pelvisSegLocal, _bodies[_thighL].Rb.position - _bodies[_thighR].Rb.position);
+        Quaternion bodyChest = _arms[0].Up >= 0 && _arms[1].Up >= 0
+            ? TrunkFrame(chest.rotation * _chestSegLocal, _bodies[_arms[0].Up].Rb.position - _bodies[_arms[1].Up].Rb.position)
+            : bodyHips * Quaternion.Inverse(clipHips) * clipChest;
+        _relPelvis = bodyHips * Quaternion.Inverse(clipHips);
+        _relChest = bodyChest * Quaternion.Inverse(clipChest);
+    }
+
+    // body i's clip bone at time t, carried onto the body's own trunk (legs: hips, arms and head: chest; the trunk itself as it is)
+    private Vector3 ClipAim(int i, float t)
+    {
+        Vector3 raw = ClipDir(_segA[i], _segB[i], t);
+        var role = _bodies[i].Role;
+        if (role is Role.ThighL or Role.ThighR or Role.CalfL or Role.CalfR or Role.FootL or Role.FootR) { ClipFrames(t); return _relPelvis * raw; }
+        if (role is Role.UpperL or Role.UpperR or Role.ForeL or Role.ForeR or Role.HandL or Role.HandR or Role.Head or Role.Neck) { ClipFrames(t); return _relChest * raw; }
+        return raw;
+    }
+
     // where body i's bone is told to point at clip time t: the clip's bone, turned from the body's own start pose for the first OffFade
     private Vector3 ClipTarget(int i, float t, Vector3 raw)
     {
@@ -270,8 +315,8 @@ internal sealed partial class DeathMotion
     private Quaternion ClipDes(int i, Quaternion des, float w)
     {
         if (w <= 0f || _segA == null || _segA[i] < 0) return des;
-        Vector3 raw = ClipDir(_segA[i], _segB[i], ClipT);
-        Vector3 want = ClipTarget(i, ClipT, raw);
+        Vector3 raw = ClipDir(_segA[i], _segB[i], ClipT);   // in the world, as the clip lies (for the log)
+        Vector3 want = ClipTarget(i, ClipT, ClipAim(i, ClipT));
         Vector3 now = des * _segLocal[i];
         // user 2026-11-02 ("i dont think i really noticed them"): how far each limb really is from the clip's (log, per clip)
         if (w > 0.9f && ClipOn)
@@ -373,7 +418,7 @@ internal sealed partial class DeathMotion
             var rb = _bodies[i].Rb;
             float len = 0.28f;
             line(rb.position, rb.position + rb.rotation * _segLocal[i] * len, Color.white, 2f);
-            line(rb.position, rb.position + ClipTarget(i, t, ClipDir(_segA[i], _segB[i], t)) * len, new Color(1f, 0.95f, 0.2f, 1f), 2f);
+            line(rb.position, rb.position + ClipTarget(i, t, ClipAim(i, t)) * len, new Color(1f, 0.95f, 0.2f, 1f), 2f);
         }
         float roll = _clipRoll * (1f - Smooth(0f, RollFade, t));
         label(ClipPos(_jHips, t) + Vector3.up * 0.9f, $"{_clip.Name}{(_clipMirror ? " mirrored" : "")}  t {t:F2}/{_clip.Length:F1}  w {ClipW():F2}  roll {roll:F0}", Color.cyan);
