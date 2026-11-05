@@ -40,9 +40,12 @@ internal static class CorpseWake
         SmoothCollisions(corpse.Ragdoll);
         var orig = corpse.Ragdoll._checkCorpseIsStill;
         if (orig != null)
+            // 2026-11-03 (issues with Smoothie only): Smoothie's "Corpses stop moving after (s)" (5 s) reports every corpse still, so
+            // EFT froze bodies we were still moving (dying, lying wounded) and rounds no longer pushed them. Smoothie exempts Rupture;
+            // a corpse our motion drives is never still, whatever reports it.
             // leased: EFT's own answer (2026-11-04, awnova: it was "&& !IsLeased", so a leased corpse always read "not still")
             corpse.Ragdoll._checkCorpseIsStill = (sleeping, t) => orig(sleeping, t) && (CorpseLeases.IsLeased(corpse) ||
-                !(Plugin.IsOn && Plugin.CorpseWakeOn.Value && e.Near && !e.Failed));
+                !(Plugin.IsOn && (Plugin.CorpseWakeOn.Value && e.Near && !e.Failed || corpse != null && corpse.GetComponent<DeathMotion>() != null)));
     }
 
     private static Vector3 BodyPos(Entry e)
@@ -68,8 +71,18 @@ internal static class CorpseWake
         return c != null && ByCorpse.TryGetValue(c, out var e) && e.Near && !e.Failed && !CorpseLeases.IsLeased(c) && Plugin.IsOn && Plugin.CorpseWakeOn.Value;
     }
 
-    // the corpse a body part belongs to (null for a part of no corpse)
-    internal static Corpse CorpseOfBody(Rigidbody rb) => rb != null ? rb.GetComponentInParent<Corpse>() : null;
+    // the corpse a body part belongs to (cached; null for a part of no corpse)
+    internal static Corpse CorpseOfBody(Rigidbody rb)
+    {
+        if (rb == null) return null;
+        if (!CorpseOf.TryGetValue(rb, out var c) || c == null)
+        {
+            if (CorpseOf.Count > 4096) CorpseOf.Clear();
+            c = rb.GetComponentInParent<Corpse>();
+            CorpseOf[rb] = c;
+        }
+        return c;
+    }
 
     internal static bool Knows(Corpse corpse) => corpse != null && ByCorpse.ContainsKey(corpse);
 
@@ -138,7 +151,10 @@ internal static class CorpseWake
             else _awake++;
             return;
         }
-        if (!rag._isPhysicsDone) { if (e.Near) _awake++; return; }   // EFT's cycle still runs (kept going by the wrapper)
+        // EFT's cycle still runs (kept going by the wrapper). 2026-11-04 (user: after dragging a body, walking into it did not move it
+        // until they walked away and back): a mod that carried it (KMA Body Drag stops the corpse's coroutines) can leave it frozen
+        // with the cycle unfinished, so "not done" no longer means it moves. Frozen parts near us: woken below like any frozen corpse.
+        if (!rag._isPhysicsDone && !AnyFrozen(rag)) { if (e.Near) _awake++; return; }
         if (!e.Near || !always && _awake >= Plugin.CorpseWakeMax.Value) return;
         if (AllRemoved(rag)) Rebuild(e);
         else Wake(e);
@@ -194,6 +210,54 @@ internal static class CorpseWake
 
     private static int _searchFixes;
 
+    // every joint there and connected, and every body part there (a ragdoll that holds together)
+    private static bool JointsWhole(CorpseRagdoll rag)
+    {
+        if (rag._jointSpawners == null || rag._rigidbodySpawners == null) return false;
+        foreach (var js in rag._jointSpawners)
+        {
+            if (js == null) return false;
+            var j = js.GetComponent<Joint>();
+            if (j == null || j.connectedBody == null) return false;
+        }
+        foreach (var s in rag._rigidbodySpawners)
+            if (s == null || s.Rigidbody == null) return false;
+        return true;
+    }
+
+    // every body this corpse has (those of a half-made rebuild too) still and kinematic, as EFT leaves a frozen corpse
+    private static void FreezeAll(CorpseRagdoll rag)
+    {
+        try
+        {
+            if (rag._rigidbodySpawners != null)
+                foreach (var s in rag._rigidbodySpawners)
+                {
+                    var rb = s != null ? s.GetComponent<Rigidbody>() : null;
+                    if (rb == null || rb.isKinematic) continue;
+                    rb.velocity = Vector3.zero;
+                    rb.angularVelocity = Vector3.zero;
+                    rag.StopRigidbody(rb);
+                }
+            if (rag._jointSpawners != null)
+                foreach (var js in rag._jointSpawners)
+                {
+                    var rb = js != null ? js.GetComponent<Rigidbody>() : null;
+                    if (rb != null && !rb.isKinematic) { rb.velocity = Vector3.zero; rag.StopRigidbody(rb); }
+                }
+        }
+        catch (Exception ex) { Plugin.Log.LogWarning($"[EuphoriaStylePhysics] freezing a broken corpse failed: {ex.Message}"); }
+    }
+
+    // some body part there and kinematic (frozen)
+    private static bool AnyFrozen(CorpseRagdoll rag)
+    {
+        if (rag._rigidbodySpawners == null) return false;
+        foreach (var sp in rag._rigidbodySpawners)
+            if (sp != null && sp.Rigidbody != null && sp.Rigidbody.isKinematic) return true;
+        return false;
+    }
+
     private static bool AllRemoved(CorpseRagdoll rag)
     {
         foreach (var s in rag._rigidbodySpawners)
@@ -205,6 +269,10 @@ internal static class CorpseWake
     private static void Wake(Entry e)
     {
         var rag = e.Corpse.Ragdoll;
+        // 2026-11-04 (user: a Black Division body's arm stretched when dragged; log: woken 4 times while EFT was taking it apart;
+        // a friend's HollywoodFX log the same): EFT takes a corpse apart joints first, one per frame, then the bodies. Woken in
+        // between, the loose parts fell away and dragged the skin into spikes. Only a corpse with every joint whole is woken.
+        if (!JointsWhole(rag)) throw new InvalidOperationException("some of its joints are already gone (EFT was taking it apart)");
         foreach (var s in rag._rigidbodySpawners)
         {
             var rb = s != null ? s.Rigidbody : null;
@@ -267,7 +335,15 @@ internal static class CorpseWake
     {
         var rag = e.Corpse.Ragdoll;
         rag._velocity = Vector3.zero;
-        rag.Start();
+        // same reports: a rebuild that threw half way, or came out without all its joints, left loose dynamic parts (spikes).
+        // Such a corpse is frozen where it lies in the same step, before anything can move, and left to EFT.
+        try { rag.Start(); }
+        catch { FreezeAll(rag); throw; }
+        if (!JointsWhole(rag))
+        {
+            FreezeAll(rag);
+            throw new InvalidOperationException("rebuilt without all its joints");
+        }
         SmoothCollisions(rag);
         Hush(rag);
         _rebuilds++;

@@ -743,7 +743,7 @@ internal sealed class DeathMotion : MonoBehaviour
         // Unity steps physics itself (no EFT script stepping): each component steps only itself.
         try
         {
-            if (!Step(Time.fixedDeltaTime)) Destroy(this);
+            if (!Step(Time.fixedDeltaTime)) { Destroy(this); enabled = false; }   // Destroy lands at the frame's end: no more steps
         }
         catch (Exception e)
         {

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
@@ -20,7 +21,7 @@ namespace EuphoriaStylePhysics;
 // Project Real Limbs (Project Zomboid) by deewindler, https://www.youtube.com/@DwindleDwindle (CC BY-NC 4.0); none of its
 // code is used here (its Java solver has no Unity counterpart).
 [BepInDependency("com.fika.core", BepInDependency.DependencyFlags.SoftDependency)]
-[BepInPlugin("amos.euphoriastylephysics", "Euphoria Style Physics", "0.21.0")]
+[BepInPlugin("amos.euphoriastylephysics", "Euphoria Style Physics", "0.21.1")]
 public sealed class Plugin : BaseUnityPlugin
 {
     internal static ManualLogSource Log;
@@ -104,6 +105,9 @@ public sealed class Plugin : BaseUnityPlugin
     internal static ConfigEntry<bool> ReachToShooter;
     internal static ConfigEntry<bool> FlinchHeadSnap;
     internal static ConfigEntry<bool> FlinchWhiplash;
+
+    // after every plugin's Awake: Smoothie may load after us (SmoothieCompat)
+    private void Start() => SmoothieCompat.Install();
 
     private void Awake()
     {
@@ -204,7 +208,7 @@ public sealed class Plugin : BaseUnityPlugin
         WalkPush = Config.Bind(c, "Walking pushes corpses", true,
             "Walking or running into a body pushes it the way you go (legs only, at up to your speed). Only bodies that are physical "
             + "move: needs Corpses stay physical near you. Only on your PC.");
-        WalkPushScale = Config.Bind(c, "Walk push strength", 1f, new ConfigDescription(
+        WalkPushScale = Config.Bind(c, "Walk push strength", 0.5f, new ConfigDescription(   // 2026-11-03 (user): default 0.5
             "How hard walking into a body pushes it (1 = at your speed).", new AcceptableValueRange<float>(0f, 2f)));
         // 0.17.4 (user clip: rolling down stairs jitters, then the body cannot be searched from above)
         SmoothCollisions = Config.Bind(c, "Smooth body collisions", true,
@@ -340,6 +344,8 @@ public sealed class Plugin : BaseUnityPlugin
                 postfix: new HarmonyMethod(typeof(Plugin), nameof(ShotReactionsPostfix)));
             // 0.17.5 (a bot killed while healing vanished): null body parts at corpse settle (on CorpseRagdoll, so Fika's observed
             // corpses too)
+            h.Patch(AccessTools.Method(typeof(RigidbodySpawner), nameof(RigidbodySpawner.Create)),
+                prefix: new HarmonyMethod(typeof(Plugin), nameof(SpawnerCreatePrefix)));
             h.Patch(AccessTools.Method(typeof(CorpseRagdoll), nameof(CorpseRagdoll.StopRigidbody)),
                 prefix: new HarmonyMethod(typeof(Plugin), nameof(StopRigidbodyPrefix)));
             // 0.20.0: weapon drop on death (on CorpseRagdoll, so Fika's observed corpses too)
@@ -351,7 +357,7 @@ public sealed class Plugin : BaseUnityPlugin
             var obsMethod = observed == null ? null : AccessTools.DeclaredMethod(observed, nameof(Player.ShotReactions));
             if (obsMethod != null)
                 h.Patch(obsMethod, postfix: new HarmonyMethod(typeof(Plugin), nameof(ShotReactionsPostfix)));
-            Log.LogInfo($"[EuphoriaStylePhysics] 0.21.0 loaded; toggle key {ToggleKey.Value}; patches on: Corpse.TryToCreateRagdoll, sleep hierarchy, Physics.Simulate, BodyPartCollider.ApplyHit, Player.BodyUpdate/MovementUpdate, FirearmController.SetTriggerPressed, BotSteering.ManualFixedUpdate, ExplosionSharedMethods.Explosion, Player.ShotReactions, CorpseRagdoll.StopRigidbody/AttachWeapon, loot search log" +
+            Log.LogInfo($"[EuphoriaStylePhysics] 0.21.1 loaded; toggle key {ToggleKey.Value}; patches on: Corpse.TryToCreateRagdoll, sleep hierarchy, Physics.Simulate, BodyPartCollider.ApplyHit, Player.BodyUpdate/MovementUpdate, FirearmController.SetTriggerPressed, BotSteering.ManualFixedUpdate, ExplosionSharedMethods.Explosion, Player.ShotReactions, CorpseRagdoll.StopRigidbody/AttachWeapon, loot search log" +
                         $"{(obsMethod != null ? " + ObservedPlayer.ShotReactions" : "")}; Fika {(observed != null ? "present" : "absent")}");
         }
         catch (Exception e)
@@ -389,7 +395,8 @@ public sealed class Plugin : BaseUnityPlugin
         ExplosionSharedMethods.OnExplosion += OnExplosion;
     }
 
-    // the Euphoric preset (picked by Claude 2026-10-28; renamed 0.17.0).
+    // the Euphoric preset (picked by Claude 2026-10-28; renamed 0.17.0). 2026-11-03: set to the user's tested settings (hold-up 0.4,
+    // rounds no longer keep a dying body up, flinch 0.3 without arm jerks); revision unchanged, so nobody's file is rewritten.
     // Revision 4 (0.17.0 test release, user: buggy and gameplay parts off, bodies launched too far): knockdowns off; stumble,
     // dying time and blast throw turned down (0.17.5: the stagger settings are gone). Written once over older revisions.
     private static void ApplyEuphoric(string why)
@@ -403,6 +410,7 @@ public sealed class Plugin : BaseUnityPlugin
         HeadshotInstantDrop.Value = false;
         DyingTimeMin.Value = 1.0f;
         DyingTimeMax.Value = 2.0f;
+        HoldUp.Value = 0.4f;   // 2026-11-03 (user: "make the euphoria preset what i have now"): a lighter hold, it drops sooner
         StumbleScale.Value = 0.5f;
         HandOnWound.Value = true;
         Stepping.Value = true;
@@ -413,7 +421,7 @@ public sealed class Plugin : BaseUnityPlugin
         WallBrace.Value = true;
         LieWoundedChance.Value = 0.5f;
         MeleeClutch.Value = true;
-        BurstKeepsUp.Value = true;
+        BurstKeepsUp.Value = false;   // 2026-11-03 (user's settings): rounds do not keep a dying body up
         LookAtShooter.Value = true;
         ReachToShooter.Value = true;
         ExplosionsVanilla.Value = false;
@@ -421,7 +429,8 @@ public sealed class Plugin : BaseUnityPlugin
         BlastThrowScale.Value = 0.6f;
         // living: every hit flinches and they keep fighting; heavy hits, leg hits and blasts put them down (knockdowns, off)
         FlinchEnabled.Value = true;
-        FlinchScale.Value = 0.8f;
+        FlinchScale.Value = 0.3f;   // 2026-11-03 (user: "set flinch strength to 0.3")
+        FlinchArms.Value = false;
         BlastFlinch.Value = true;
         KnockdownEnabled.Value = false;
         KnockdownImpact.Value = 90f;
@@ -444,7 +453,7 @@ public sealed class Plugin : BaseUnityPlugin
         KnockdownHoldStill.Value = true;
         PresetApplied.Value = true;
         PresetRevision.Value = 4;
-        Log.LogInfo($"[EuphoriaStylePhysics] Euphoric preset applied ({why}, revision 4): variety 0.15, dying 1.0-2.0 s, stumble 0.5, "
+        Log.LogInfo($"[EuphoriaStylePhysics] Euphoric preset applied ({why}, revision 4): variety 0.15, dying 1.0-2.0 s, hold-up 0.4, stumble 0.5, flinch 0.3, "
                     + "no EFT ragdoll (drop dead 0, headshots not instant, explosions ours), blast throw 0.6; knockdowns OFF");
     }
 
@@ -668,12 +677,14 @@ public sealed class Plugin : BaseUnityPlugin
     }
 
     // 0.20.0: EFT joins the hand item to the corpse: SpringJoint strap (long guns) or FixedJoint to the forearm (pistol, knife,
-    // grenade; Player.DropItemDead). Same as HollywoodFX: strap off (falls), hand item hidden. When another mod (HollywoodFX's
-    // "Drop Weapon on Death") also patches AttachWeapon, it is left to that mod.
+    // grenade; Player.DropItemDead). Same as HollywoodFX: strap off (falls), hand item hidden.
+    // user 2026-11-04 ("making sure it works fine with hollywoodfxs drop on"): with another mod's drop on (HollywoodFX's "Drop Weapon
+    // on Death"), the gun still falls through its patch, and ours still fits and settles it (its own drop only cuts the strap, so its
+    // guns floated on their oversized colliders). Both cutting the same strap is harmless: Destroy only lands at the frame's end.
     private static int _otherWeaponDrop = -1;
     private static void AttachWeaponPostfix(CorpseRagdoll __instance, Rigidbody weaponRigidbody)
     {
-        if (!IsOn || !DropWeapon.Value || weaponRigidbody == null) return;
+        if (!IsOn || weaponRigidbody == null) return;
         try
         {
             if (_otherWeaponDrop < 0)
@@ -683,10 +694,11 @@ public sealed class Plugin : BaseUnityPlugin
                 if (info != null) foreach (var p in info.Postfixes) if (p.owner != "amos.euphoriastylephysics") { other = p; break; }
                 _otherWeaponDrop = other != null ? 1 : 0;
                 Log.LogInfo(other != null
-                    ? $"[EuphoriaStylePhysics] weapon drop left to {other.owner} ({other.PatchMethod.DeclaringType?.FullName})"
+                    ? $"[EuphoriaStylePhysics] {other.owner} ({other.PatchMethod.DeclaringType?.FullName}) also drops weapons: ours fits and settles them"
                     : "[EuphoriaStylePhysics] weapon drop on (no other mod drops weapons)");
             }
-            if (_otherWeaponDrop == 1) return;
+            // ours off and no other mod dropping: EFT's strap stays
+            if (!DropWeapon.Value && _otherWeaponDrop != 1) return;
             var spring = weaponRigidbody.GetComponent<SpringJoint>();
             if (spring != null)
             {
@@ -694,12 +706,22 @@ public sealed class Plugin : BaseUnityPlugin
                 // 0.20.0 (user: bots flew up while dying, then back; log: heads at 10-17 m/s right after the drop): EFT puts the weapon
                 // in the right palm and its strap lets it hit the body. Loose, it sat inside the hand and chest colliders and shoved
                 // them apart. The dropped weapon no longer touches its own body (it still lands on the ground).
-                var body = __instance._playerBody;
-                if (body != null)
+                // 2026-11-03 (user screenshots: dropped guns floating, resting on "an invisible wall" that moves with the gun): its
+                // colliders reach well past the model, so on the floor it stood on them. The dropped gun now collides with one box
+                // fitted to what is drawn, and ignores the whole dead player (body parts and its movement capsule).
+                var fitted = FitDroppedWeapon(weaponRigidbody);
+                // 2026-11-03 (user: "cant you just make the gun not move?"): it falls and lands, then stays where it lies (walking
+                // into it does not push it, see CorpseBump; once at rest it is locked in place)
+                DroppedWeapons.Add(weaponRigidbody);
+                weaponRigidbody.gameObject.AddComponent<WeaponSettle>();
+                var owner = __instance._playerBody != null ? __instance._playerBody.GetComponentInParent<Player>() : null;
+                var bodyRoot = owner != null ? ((Component)owner).transform : __instance._playerBody != null ? __instance._playerBody.transform : null;
+                if (bodyRoot != null && fitted != null)
                 {
-                    var mine = weaponRigidbody.GetComponentsInChildren<Collider>(true);
-                    foreach (var bc in body.GetComponentsInChildren<Collider>(true))
-                        foreach (var wc in mine) Physics.IgnoreCollision(wc, bc, true);
+                    var mine = fitted.GetComponents<BoxCollider>();
+                    foreach (var bc in bodyRoot.GetComponentsInChildren<Collider>(true))
+                        if (bc.gameObject != fitted.gameObject)
+                            foreach (var m in mine) Physics.IgnoreCollision(m, bc, true);
                 }
             }
             else weaponRigidbody.gameObject.SetActive(false);
@@ -707,6 +729,263 @@ public sealed class Plugin : BaseUnityPlugin
         }
         catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] weapon drop failed: {e.Message}"); }
     }
+
+    internal static readonly HashSet<Rigidbody> DroppedWeapons = new HashSet<Rigidbody>();
+
+    // A dropped gun locks in place once it has come to rest (asleep, or slow for half a second; 15 s at most)
+    // user 2026-11-03 ("the game seems to break when you pick up a weapon that was dropped"; arms twisted around the gun): EFT puts
+    // the same weapon object in the hands of whoever picks it up, and our drop changes (its colliders off, a fitted box, the lock)
+    // went with it. They are undone the moment it leaves the corpse: moved to another parent (into hands), switched off (back to
+    // EFT's pool), or its rigidbody removed (EFT's ClearWeapon).
+    private sealed class DroppedWeaponState : MonoBehaviour
+    {
+        public readonly List<Collider> Off = new List<Collider>();
+        public BoxCollider Box;
+        public Rigidbody Rb;
+        public Transform Parent;
+        private bool _restored;
+        private static int _logs;
+
+        // user 2026-11-04 (movement still broke after picking up a gun): checked here, a frame after it moved, not the moment it
+        // moved: EFT turns a gun's colliders off for the hands around that move, and restoring right then turned them back on
+        private void LateUpdate()
+        {
+            if (transform.parent != Parent) { Restore("taken"); return; }
+            // user 2026-11-04 (screenshot: AI stuck on dropped guns in a doorway): EFT removes the gun's rigidbody once the body is
+            // out of sight (ClearWeapon). Restoring then switched its own colliders back on, and they reach well past the model.
+            // A gun still lying where it fell keeps our fitted box (corpse layer) until someone takes it or it goes back to the pool.
+            if (Rb == null && !_bodyGone)
+            {
+                _bodyGone = true;
+                DroppedWeapons.RemoveWhere(r => r == null);
+                var settle = GetComponent<WeaponSettle>();
+                if (settle != null) Destroy(settle);
+                if (VerboseLog.Value) Log.LogInfo($"[EuphoriaStylePhysics] dropped weapon {name}: physics body removed by EFT, fitted box kept");
+            }
+        }
+        private bool _bodyGone;
+
+        private void OnDisable() => Restore("put away");
+
+        private void Restore(string why)
+        {
+            if (_restored) return;
+            _restored = true;
+            try
+            {
+                // user 2026-11-04 (a picked-up gun "spazzing out and slowly sliding me"): EFT's DropItemDead recorded each collider's
+                // in-hands state (AssetPoolObject.StoreCollider) before switching it on for the ground, and puts that state back when the
+                // gun leaves the corpse. Switching them on here undid that and the held gun collided with its holder. So the gun's own
+                // colliders come back only while it still lies where it fell; once it has moved or gone, EFT's record decides.
+                bool lying = why != "put away" && transform.parent == Parent && gameObject.activeInHierarchy;
+                if (lying) foreach (var c in Off) if (c != null) c.enabled = true;
+                if (Box != null) { Box.gameObject.SetActive(false); Destroy(Box.gameObject); }   // all its boxes off now   // off now: Destroy only lands at the frame's end
+                var settle = GetComponent<WeaponSettle>();
+                if (settle != null) Destroy(settle);
+                bool body = false;
+                if (Rb != null)
+                {
+                    DroppedWeapons.Remove(Rb);
+                    // user 2026-11-04 ("whenever i pick up a weapon that was dropped on the ground my movement breaks severely"): a gun
+                    // we had locked kept its (kinematic, unsupported) rigidbody into the hands, where it collided with its holder. A gun
+                    // that leaves the corpse never takes a physics body along: off at once, removed with its joints.
+                    if (why == "taken")
+                    {
+                        body = true;
+                        Rb.detectCollisions = false;
+                        Rb.isKinematic = true;
+                        foreach (var j in GetComponents<Joint>()) Destroy(j);
+                        Destroy(Rb);
+                    }
+                }
+                _logs++;
+                if (VerboseLog.Value || _logs <= 3)
+                    Log.LogInfo($"[EuphoriaStylePhysics] dropped weapon {name} {why}: {(lying ? $"its own colliders back ({Off.Count})" : "its colliders left to EFT")}{(body ? ", its physics body removed" : "")}");
+            }
+            catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] dropped weapon not restored: {e.Message}"); }
+            Destroy(this);
+        }
+    }
+
+    private sealed class WeaponSettle : MonoBehaviour
+    {
+        private Rigidbody _rb;
+        private Vector3 _long = Vector3.forward;   // the gun's long side, in its own frame (the fitted box's longest edge)
+        private float _since, _slow;
+        private int _nudges;
+
+        private void Start()
+        {
+            _rb = GetComponent<Rigidbody>();
+            _since = Time.time;
+            var box = GetComponent<DroppedWeaponState>()?.Box;
+            if (box != null)
+            {
+                Vector3 z = box.size;
+                _long = z.x >= z.y && z.x >= z.z ? Vector3.right : z.y >= z.z ? Vector3.up : Vector3.forward;
+            }
+        }
+
+        private void FixedUpdate()
+        {
+            if (_rb == null || _rb.isKinematic) { Done(); return; }
+            _slow = _rb.velocity.sqrMagnitude < 0.01f && _rb.angularVelocity.sqrMagnitude < 0.04f ? _slow + Time.fixedDeltaTime : 0f;
+            Vector3 along = transform.TransformDirection(_long);
+            // user 2026-11-03 ("it fell vertically. 3 times out of 4"): a gun landing on its muzzle or stock pauses balanced before
+            // it tips over, and was locked standing in that pause. It locks only lying down (its long side within ~30 deg of flat);
+            // still standing when it stops, it gets a small push to tip over.
+            bool lying = Mathf.Abs(Vector3.Dot(along, Vector3.up)) < 0.5f;
+            bool rest = _rb.IsSleeping() || _slow > 0.5f;
+            if (rest && !lying && _nudges < 3)
+            {
+                Vector3 tip = Vector3.Cross(Vector3.up, along);
+                if (tip.sqrMagnitude < 1e-4f) tip = Vector3.Cross(Vector3.up, transform.right);
+                _rb.WakeUp();
+                _rb.AddTorque(tip.normalized * 0.6f, ForceMode.VelocityChange);
+                _slow = 0f;
+                _nudges++;
+                return;
+            }
+            // only at rest and lying down (or given up after three pushes); 15 s is a safety cap
+            if (rest || Time.time - _since > 15f) FlattenAndLock();
+        }
+
+        // user 2026-11-04 (screenshot: a rifle standing on its end beside the body): pushes did not always tip it, and EFT's own
+        // StopWeapon froze guns that were still standing. Whatever locks it (us, or EFT through StopRigidbody), a gun that is not
+        // lying flat is laid on its side on the floor under it first.
+        internal void FlattenAndLock()
+        {
+            if (_rb == null) { Done(); return; }
+            LayFlat(_rb, _long);
+            _rb.velocity = Vector3.zero;
+            _rb.angularVelocity = Vector3.zero;
+            if (!_rb.isKinematic)
+            {
+                PhysicsExtensions.UpdateController.UnsupportRigidbody(_rb);   // as EFT's own StopRigidbody does before freezing
+                _rb.isKinematic = true;
+            }
+            Done();
+        }
+
+        private static void LayFlat(Rigidbody rb, Vector3 longLocal)
+        {
+            var t = rb.transform;
+            Vector3 along = t.TransformDirection(longLocal);
+            if (Mathf.Abs(Vector3.Dot(along, Vector3.up)) < 0.5f) return;   // already lying
+            Vector3 flat = Vector3.ProjectOnPlane(along, Vector3.up);
+            if (flat.sqrMagnitude < 1e-4f) flat = Vector3.ProjectOnPlane(t.right, Vector3.up);
+            if (flat.sqrMagnitude < 1e-4f) flat = Vector3.forward;
+            Quaternion rot = Quaternion.FromToRotation(along, flat.normalized) * t.rotation;
+            Vector3 pos = t.position;
+            var box = rb.GetComponent<DroppedWeaponState>()?.Box;
+            if (box != null && Physics.Raycast(rb.worldCenterOfMass + Vector3.up * 0.3f, Vector3.down, out var hit, 3f,
+                    LayerMask.GetMask("HighPolyCollider", "LowPolyCollider", "Terrain"), QueryTriggerInteraction.Ignore))
+            {
+                Vector3 size = Vector3.Scale(box.size, t.lossyScale);
+                float halfUp = 0.5f * (Mathf.Abs(Vector3.Dot(rot * Vector3.right, Vector3.up)) * size.x
+                                     + Mathf.Abs(Vector3.Dot(rot * Vector3.up, Vector3.up)) * size.y
+                                     + Mathf.Abs(Vector3.Dot(rot * Vector3.forward, Vector3.up)) * size.z);
+                Vector3 centre = pos + rot * Vector3.Scale(box.center, t.lossyScale);
+                pos += Vector3.up * (hit.point.y + halfUp + 0.005f - centre.y);
+            }
+            t.SetPositionAndRotation(pos, rot);
+            rb.position = pos;
+            rb.rotation = rot;
+            if (VerboseLog.Value) Log.LogInfo($"[EuphoriaStylePhysics] dropped weapon {rb.name} was standing on its end: laid flat");
+        }
+
+        private void Done()
+        {
+            if (_rb != null) DroppedWeapons.Remove(_rb);
+            DroppedWeapons.RemoveWhere(r => r == null);
+            Destroy(this);
+        }
+    }
+
+    // The dropped gun's collision: its own solid colliders off, one box around its drawn meshes (in the gun's frame) on instead.
+    // Null if it has nothing drawn (then it keeps its colliders).
+    private static BoxCollider FitDroppedWeapon(Rigidbody gun)
+    {
+        var t = gun.transform;
+        bool any = false;
+        Vector3 min = Vector3.positiveInfinity, max = Vector3.negativeInfinity;
+        var parts = new List<(Vector3 min, Vector3 max)>();
+        // only the gun's solid, nearest-detail meshes: lower LOD copies, laser beams, light cones and flash effects (transparent or
+        // named so) made the box far bigger than the gun (user 2026-11-04: "their hitbox is too big")
+        var skip = new HashSet<Renderer>();
+        foreach (var lg in gun.GetComponentsInChildren<LODGroup>(false))
+        {
+            var lods = lg.GetLODs();
+            for (int i = 1; i < lods.Length; i++) foreach (var lr in lods[i].renderers) if (lr != null) skip.Add(lr);
+        }
+        foreach (var r in gun.GetComponentsInChildren<Renderer>(false))
+        {
+            if (r == null || !r.enabled || !(r is MeshRenderer || r is SkinnedMeshRenderer) || skip.Contains(r)) continue;
+            var mat = r.sharedMaterial;
+            if (mat != null && mat.renderQueue >= 2500) continue;   // transparent: beams, glass, flashes
+            string rn = r.name.ToLowerInvariant();
+            if (rn.Contains("beam") || rn.Contains("laser") || rn.Contains("light") || rn.Contains("flash") || rn.Contains("fx") ||
+                rn.Contains("glow") || rn.Contains("cone")) continue;
+            var lb = r.localBounds;
+            if (lb.size.sqrMagnitude < 1e-8f) continue;
+            Vector3 pmin = Vector3.positiveInfinity, pmax = Vector3.negativeInfinity;
+            for (int i = 0; i < 8; i++)
+            {
+                Vector3 corner = lb.center + Vector3.Scale(lb.extents, new Vector3((i & 1) == 0 ? -1 : 1, (i & 2) == 0 ? -1 : 1, (i & 4) == 0 ? -1 : 1));
+                Vector3 p = t.InverseTransformPoint(r.transform.TransformPoint(corner));
+                pmin = Vector3.Min(pmin, p);
+                pmax = Vector3.Max(pmax, p);
+            }
+            min = Vector3.Min(min, pmin);
+            max = Vector3.Max(max, pmax);
+            parts.Add((pmin, pmax));
+            any = true;
+        }
+        if (!any) return null;
+        int off = 0;
+        var state = gun.gameObject.AddComponent<DroppedWeaponState>();
+        foreach (var c in gun.GetComponentsInChildren<Collider>(true))
+            if (c != null && !c.isTrigger && c.enabled && c.attachedRigidbody == gun) { c.enabled = false; state.Off.Add(c); off++; }
+        // on its own child on the corpse layer, as EFT puts a dead player's gun colliders: characters do not walk into it
+        var holder = new GameObject("ESP dropped weapon box") { layer = LayerMask.NameToLayer("Deadbody") };
+        holder.transform.SetParent(t, false);
+        // the whole gun's box only measures it (its long side, its height when laid flat); it does not collide
+        var box = holder.AddComponent<BoxCollider>();
+        state.Box = box;
+        state.Rb = gun;
+        state.Parent = gun.transform.parent;
+        box.center = (min + max) * 0.5f;
+        box.size = Vector3.Max(max - min, new Vector3(0.02f, 0.02f, 0.02f));
+        box.enabled = false;
+        // user 2026-11-04 (screenshot: a rifle floating above the floor): one box around a whole rifle rests on its corners (magazine
+        // and suppressor), with the rest of the gun in the air. It collides with one small box per solid part instead, so it lies on
+        // its real shape: the largest parts first, parts inside another dropped, at most 24
+        parts.Sort((a, b) => Vol(b).CompareTo(Vol(a)));
+        var kept = new List<(Vector3 min, Vector3 max)>();
+        foreach (var part in parts)
+        {
+            if (kept.Count >= 24) break;
+            Vector3 sz = part.max - part.min;
+            if (sz.x + sz.y + sz.z < 0.03f) continue;   // screws, pins, sight dots
+            bool inside = false;
+            foreach (var k in kept)
+                if (k.min.x <= part.min.x + 0.003f && k.min.y <= part.min.y + 0.003f && k.min.z <= part.min.z + 0.003f &&
+                    k.max.x >= part.max.x - 0.003f && k.max.y >= part.max.y - 0.003f && k.max.z >= part.max.z - 0.003f) { inside = true; break; }
+            if (inside) continue;
+            kept.Add(part);
+            var pb = holder.AddComponent<BoxCollider>();
+            pb.center = (part.min + part.max) * 0.5f;
+            pb.size = Vector3.Max(sz, new Vector3(0.015f, 0.015f, 0.015f));
+        }
+        if (kept.Count == 0) box.enabled = true;   // nothing usable: the whole box collides
+        gun.ResetCenterOfMass();
+        gun.ResetInertiaTensor();
+        if (VerboseLog.Value)
+            Log.LogInfo($"[EuphoriaStylePhysics] dropped weapon {gun.name}: {off} colliders off, {kept.Count} part boxes, whole gun {box.size.x:F2} x {box.size.y:F2} x {box.size.z:F2} m");
+        return box;
+    }
+
+    private static float Vol((Vector3 min, Vector3 max) p) { Vector3 s = p.max - p.min; return s.x * s.y * s.z; }
 
     // 0.21.0 (user: "now you cant loot them when you push them away from where they died"; log: Inventory Walker "Walked 4.8 m from
     // the loot (range 3.0 m); closing it" with the body 1.2 m away): Inventory Walker measures its loot range from the corpse's root,
@@ -757,9 +1036,41 @@ public sealed class Plugin : BaseUnityPlugin
     // 0.17.5: EFT's StopRigidbody uses the body without a null check (CorpseRagdoll.StopRigidbody / its settle loop), and the corpse
     // vanished. When another mod (HollywoodFX's ragdoll section) has its own prefix there, the null body is left to it.
     private static int _otherNullFix = -1;
+    // 2026-11-04 (user: a body that could not be dragged; TraumaCore's wound inspection and our rebuilds threw the same): EFT's
+    // RigidbodySpawner.Create adds a Rigidbody only when it has none of its own, and Unity refuses a second one, so a body part
+    // still carrying a rigidbody the spawner had lost track of made AddComponent return null and Create throw. Here that rigidbody
+    // is taken back (a joint still hangs on it) or removed first, so Create works for every mod that rebuilds a ragdoll.
+    private static readonly AccessTools.FieldRef<RigidbodySpawner, Rigidbody> SpawnerBody =
+        AccessTools.FieldRefAccess<RigidbodySpawner, Rigidbody>("_rigidbody");
+    private static int _spawnerRepairs;
+
+    private static void SpawnerCreatePrefix(RigidbodySpawner __instance)
+    {
+        try
+        {
+            if (__instance == null || SpawnerBody(__instance) != null) return;
+            var stray = __instance.GetComponent<Rigidbody>();
+            if (stray == null) return;
+            if (__instance.GetComponent<Joint>() != null)
+                SpawnerBody(__instance) = stray;   // still holding a joint: it is this part's body, keep it
+            else
+                UnityEngine.Object.DestroyImmediate(stray);   // left over from a teardown: gone now, Create adds a fresh one
+            _spawnerRepairs++;
+            if (_spawnerRepairs <= 5 || VerboseLog.Value && _spawnerRepairs % 50 == 0)
+                Log.LogInfo($"[EuphoriaStylePhysics] ragdoll part {__instance.name}: a leftover rigidbody {(SpawnerBody(__instance) != null ? "taken back" : "removed")} before EFT built it ({_spawnerRepairs} so far)");
+        }
+        catch (Exception e) { Log.LogWarning($"[EuphoriaStylePhysics] ragdoll part repair failed: {e.Message}"); }
+    }
+
     private static bool StopRigidbodyPrefix(CorpseRagdoll __instance, Rigidbody rigidbody)
     {
-        if (rigidbody != null) return true;
+        if (rigidbody != null)
+        {
+            // EFT freezing a dropped gun (StopWeapon) while we still settle it: lay it flat first
+            var settle = rigidbody.GetComponent<WeaponSettle>();
+            if (settle != null) settle.FlattenAndLock();
+            return true;
+        }
         try
         {
             if (_otherNullFix < 0)
@@ -863,7 +1174,10 @@ public sealed class Plugin : BaseUnityPlugin
         _realTime += Time.deltaTime;
         float lag = _realTime - _simTime;
         if (lag > 0.1f) { _simTime = _realTime - 0.1f; lag = 0.1f; }   // never try to catch up more than this
-        if (lag < 0.004f || !PhysicsExtensions.Simulation.CanRunSimulate) return;
+        // 2026-11-03 (issues with Smoothie only): Smoothie's "Run physics at most 60 times a second" skips frames and pays the
+        // time back in one step; at 0.004 s we stepped the skipped time ourselves and it was then simulated twice (bodies faster
+        // than real time, extra map-wide physics). Only a real shortfall, more than a 60 fps frame's worth, is stepped here.
+        if (lag < 0.02f || !PhysicsExtensions.Simulation.CanRunSimulate) return;
         float step = Mathf.Min(lag, 0.03f);
         Physics.Simulate(step);   // our prefix steps the muscles and counts it
         if (++_catchUps == 1 || _catchUps % 500 == 0)

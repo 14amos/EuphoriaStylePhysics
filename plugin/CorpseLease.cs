@@ -37,7 +37,7 @@ namespace EuphoriaStylePhysics
 
         private static void Prune()
         {
-            if (Holders.Count < 32) return;
+            if (Holders.Count == 0) return;   // every new lease drops those of bodies gone since (earlier raids too)
             Dead.Clear();
             foreach (var c in Holders.Keys) if (c == null) Dead.Add(c);
             foreach (var c in Dead) Holders.Remove(c);
