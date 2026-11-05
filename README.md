@@ -69,6 +69,10 @@ Log: `BepInEx/LogOutput.log`, lines starting with `[EuphoriaStylePhysics]`. Plea
   (not while still on their feet); our own round push is then left out (so nothing is pushed twice). Its Blast injuries throws grenade kills within 6 m; our blast throw then leaves those bodies to it. If
   bodies fly too far from bullets, lower RealTargets' Impacts > Push strength.
 - **Inventory Walker:** works together; its loot range on a body is measured from where the body lies.
+- **Smoothie:** works together. Its 60 Hz physics cap pauses while this mod moves a body (so deaths stay smooth above
+  60 FPS), and in Fika its "Corpses stop moving after" setting leaves bodies alone while they are still dying.
+- **Body-dragging mods:** [KMA - Keep Me Alive](https://sp-mod.com/mod/3269/kma-keep-me-alive) takes a corpse over through
+  the CorpseLeaseV1 API ([docs/CorpseLease.md](docs/CorpseLease.md)); other mods can use it the same way.
 - **HollywoodFX:** keep its "08. Ragdoll Effects" off. On, it pushes every shot body hard and changes every body
   part's weight, drag and bounce, which fights this mod. Its gore, blood and explosion effects are fine.
 
